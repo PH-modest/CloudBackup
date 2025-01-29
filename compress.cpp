@@ -20,7 +20,7 @@ int main(int argc,char* argv[])
     body.resize(fsize);//调整body文件大小为目标文件大小
     ifs.read(&body[0],fsize);//读取文件所有数据到body
 
-    std::string packed = bundle::pack(bundle::LZIP,body);//已lzip格式压缩文件数据
+    std::string packed = bundle::pack(bundle::LZIP,body);//以lzip格式压缩文件数据
 
     std::ofstream ofs;
     ofs.open(ofilename,std::ios::binary);//打开压缩包文件
