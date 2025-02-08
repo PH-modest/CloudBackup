@@ -3,9 +3,12 @@
 #include<string>
 #include<fstream>
 #include<sys/stat.h>
+#include<experimental/filesystem>
+#include"bundle.h"
 
 namespace cloud
 {
+    namespace fs = std::experimental::filesystem;
     class FileUtil
     {
     private:
@@ -116,6 +119,77 @@ namespace cloud
                 return false;
             }
             ofs.close();
+            return true;
+        }
+        //压缩
+        bool Compress(const std::string &packname)
+        {
+            //获取源文件内容
+            std::string body;
+            if(this->GetContent(&body)==false)
+            {
+                std::cout<<"Compress get file content failed!\n";
+                return false;
+            }
+            //对数据进行压缩
+            std::string packed = bundle::pack(bundle::LZIP,body);
+            //将压缩后的数据存储到压缩包文件中
+            FileUtil fu(packname);
+            if(fu.SetContent(packed) == false)
+            {
+                std::cout<<"compress write packed data failed!\n";
+                return false;
+            }
+            return true;
+        }
+        //解压缩
+        bool UnCompress(const std::string &filename)
+        {
+            //获取压缩包内数据
+            std::string body;
+            if(this->GetContent(&body) == false)
+            {
+                std::cout<<"uncompress get file content failed!\n";
+                return false;
+            }
+            //将压缩数据进行解压缩
+            std::string unpacked = bundle::unpack(body);
+            //将解压缩后的数据写入到新文件
+            FileUtil fu(filename);
+            if(fu.SetContent(unpacked) == false)
+            {
+                std::cout<<"uncompress write unpacked data failed!\n";
+                return false;
+            }
+            return true;
+        }
+        //判断文件是否存在
+        bool Exists()
+        {
+            return fs::exists(_filename);
+        }
+        //创建目录
+        bool CreateDirectory()
+        {
+            if(this->Exists()==true)
+            {
+                return true;
+            }
+            return fs::create_directories(_filename);
+        }
+        //浏览获取目录下所有文件路径名
+        bool ScanDirectory(std::vector<std::string> *arry)
+        {
+            for(auto& p : fs::directory_iterator(_filename))
+            {
+                if(fs::is_directory(p)==true)//判断当前文件名是否是目录
+                {
+                    continue;
+                }
+                //relative_path：带有路径的文件名
+                //用path实例化p，然后以string类型返回相对路径
+                arry->push_back(fs::path(p).relative_path().string());
+            }
             return true;
         }
     };
