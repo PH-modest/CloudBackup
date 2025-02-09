@@ -4,6 +4,7 @@
 #include<fstream>
 #include<sys/stat.h>
 #include<experimental/filesystem>
+#include<jsoncpp/json/json.h>
 #include"bundle.h"
 
 namespace cloud
@@ -189,6 +190,41 @@ namespace cloud
                 //relative_path：带有路径的文件名
                 //用path实例化p，然后以string类型返回相对路径
                 arry->push_back(fs::path(p).relative_path().string());
+            }
+            return true;
+        }
+    };
+
+    class JsonUtil
+    {
+    public:
+        //序列化
+        static bool Serialize(const Json::Value &root,std::string *str)
+        {
+            Json::StreamWriterBuilder swb;//初始化一个用于配置JSON序列化参数的构建器
+            swb.settings_["emitUTF8"] = true;//采用UTF-8的编码形式，默认是Unicode
+            std::unique_ptr<Json::StreamWriter> sw(swb.newStreamWriter());//生成一个JSON写入器，用智能指针管理生命周期
+            std::stringstream ss;
+            //将root中的JSON数据写入字符串流ss
+            if(sw->write(root,&ss) != 0)
+            {
+                std::cout<<"json write failed!\n";
+                return false;
+            }
+            *str = ss.str();//从字符串ss中提取内容，赋值给输出参数str指向的字符串
+            return true;
+        }
+        //反序列化
+        static bool UnSerialize(const std::string &str,Json::Value *root)
+        {
+            Json::CharReaderBuilder crb;//用来生成Json::CharReader对象
+            std::unique_ptr<Json::CharReader> cr(crb.newCharReader());//指向Json::CharReader对象，使其调用parse函数
+            std::string error;//获取出错信息
+            bool ret = cr->parse(str.c_str(),str.c_str()+str.size(),root,&error);//将反序列化之后的数据存储在root中
+            if(ret==false)
+            {
+                std::cout<<"parse error:"<<error<<std::endl;
+                return false;
             }
             return true;
         }
