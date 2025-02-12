@@ -1,3 +1,5 @@
+#ifndef __MY_UTIL__
+#define __MY_UTIL__
 #include<iostream>
 #include<vector>
 #include<string>
@@ -230,3 +232,4 @@ namespace cloud
         }
     };
 }
+#endif

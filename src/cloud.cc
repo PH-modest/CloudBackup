@@ -1,4 +1,5 @@
 #include "util.hpp"
+#include "config.hpp"
 
 void FileUtilTest(const std::string &filename)
 {
@@ -46,7 +47,7 @@ void FileUtilTest(const std::string &filename)
 
 void JsonUtilTest()
 {
-    char *name = "小明";
+    const char *name = "小明";
     int age = 19;
     float score[] = {85,88.5,99};
     Json::Value root;
@@ -69,9 +70,24 @@ void JsonUtilTest()
     }
 }
 
+void ConfigTest()
+{
+    cloud::Config *config = cloud::Config::GetInstance();
+    std::cout<<config->GetHotTime()<<std::endl;
+    std::cout<<config->GetServerPort()<<std::endl;
+    std::cout<<config->GetServerIp()<<std::endl;
+    std::cout<<config->GetDownloadPrefix()<<std::endl;
+    std::cout<<config->GetPackFileSuffix()<<std::endl;
+    std::cout<<config->GetPackDir()<<std::endl;
+    std::cout<<config->GetBackDir()<<std::endl;
+    std::cout<<config->GetBackupFile()<<std::endl;
+
+}
+
 int main(int argc,char *argv[])
 {
     //FileUtilTest(argv[1]);
-    JsonUtilTest();
+    //JsonUtilTest();
+    ConfigTest();
     return 0;
 }
