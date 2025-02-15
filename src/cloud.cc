@@ -1,5 +1,6 @@
 #include "util.hpp"
 #include "config.hpp"
+#include "data.hpp"
 
 void FileUtilTest(const std::string &filename)
 {
@@ -84,10 +85,24 @@ void ConfigTest()
 
 }
 
+void DataTest(const std::string &filename)
+{
+    cloud::BackupInfo info;
+    info.NewBackupInfo(filename);
+    std::cout<<info.pack_flag<<std::endl;
+    std::cout<<info.fsize<<std::endl;
+    std::cout<<info.atime<<std::endl;
+    std::cout<<info.mtime<<std::endl;
+    std::cout<<info.real_path<<std::endl;
+    std::cout<<info.pack_path<<std::endl;
+    std::cout<<info.url_path<<std::endl;
+}
+
 int main(int argc,char *argv[])
 {
     //FileUtilTest(argv[1]);
     //JsonUtilTest();
-    ConfigTest();
+    //ConfigTest();
+    DataTest(argv[1]);
     return 0;
 }
