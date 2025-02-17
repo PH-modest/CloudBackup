@@ -87,15 +87,62 @@ void ConfigTest()
 
 void DataTest(const std::string &filename)
 {
+    cloud::DataManager data;
+    std::vector<cloud::BackupInfo> arry;
+    data.GetAll(&arry);
+    for(auto &a : arry)
+    {
+        std::cout<<a.pack_flag<<std::endl;
+        std::cout<<a.fsize<<std::endl;
+        std::cout<<a.atime<<std::endl;
+        std::cout<<a.mtime<<std::endl;
+        std::cout<<a.real_path<<std::endl;
+        std::cout<<a.pack_path<<std::endl;
+        std::cout<<a.url_path<<std::endl;
+    }
+    /*
     cloud::BackupInfo info;
     info.NewBackupInfo(filename);
-    std::cout<<info.pack_flag<<std::endl;
-    std::cout<<info.fsize<<std::endl;
-    std::cout<<info.atime<<std::endl;
-    std::cout<<info.mtime<<std::endl;
-    std::cout<<info.real_path<<std::endl;
-    std::cout<<info.pack_path<<std::endl;
-    std::cout<<info.url_path<<std::endl;
+    cloud::DataManager data;
+
+    std::cout<<"----------Insert and GetOneByURL---------------\n";
+    data.Insert(info);
+    cloud::BackupInfo tmp;
+    data.GetOneByURL("/download/bundle.h",&tmp);
+    std::cout<<tmp.pack_flag<<std::endl;
+    std::cout<<tmp.fsize<<std::endl;
+    std::cout<<tmp.atime<<std::endl;
+    std::cout<<tmp.mtime<<std::endl;
+    std::cout<<tmp.real_path<<std::endl;
+    std::cout<<tmp.pack_path<<std::endl;
+    std::cout<<tmp.url_path<<std::endl;
+
+    std::cout<<"----------Update and GetAll---------------\n";
+    info.pack_flag=true;
+    data.Update(info);
+    std::vector<cloud::BackupInfo> arry;
+    data.GetAll(&arry);
+    for(auto &a : arry)
+    {
+        std::cout<<a.pack_flag<<std::endl;
+        std::cout<<a.fsize<<std::endl;
+        std::cout<<a.atime<<std::endl;
+        std::cout<<a.mtime<<std::endl;
+        std::cout<<a.real_path<<std::endl;
+        std::cout<<a.pack_path<<std::endl;
+        std::cout<<a.url_path<<std::endl;
+    }
+
+    std::cout<<"----------GetOneByRealPath---------------\n";
+    data.GetOneByRealPath(filename,&tmp);
+    std::cout<<tmp.pack_flag<<std::endl;
+    std::cout<<tmp.fsize<<std::endl;
+    std::cout<<tmp.atime<<std::endl;
+    std::cout<<tmp.mtime<<std::endl;
+    std::cout<<tmp.real_path<<std::endl;
+    std::cout<<tmp.pack_path<<std::endl;
+    std::cout<<tmp.url_path<<std::endl;
+    */
 }
 
 int main(int argc,char *argv[])

@@ -1,5 +1,4 @@
-#ifndef __MY_DATA__
-#define __MY_DATA__
+#pragma once
 #include "util.hpp"
 #include "config.hpp"
 #include<unordered_map>
@@ -52,6 +51,7 @@ namespace cloud
         {
             _backup_file=Config::GetInstance()->GetBackupFile();
             pthread_rwlock_init(&_rwlock,NULL);
+            InitLoad();//数据初始化加载
         }
         ~DataManager()
         {
@@ -62,6 +62,7 @@ namespace cloud
             pthread_rwlock_wrlock(&_rwlock);
             _table[info.url_path]=info;
             pthread_rwlock_unlock(&_rwlock);
+            storage();
             return true;
         }
         bool Update(const BackupInfo &info)
@@ -69,12 +70,104 @@ namespace cloud
             pthread_rwlock_wrlock(&_rwlock);
             _table[info.url_path]=info;
             pthread_rwlock_unlock(&_rwlock);
+            storage();
             return true;
         }
-        bool GetOneByURL(const std::string &url,BackupInfo *info);
-        bool GetOneByRealPath(const std::string &realpath,BackupInfo *info);
-        bool GetAll(std::vector<BackupInfo> *arry);
+        bool GetOneByURL(const std::string &url,BackupInfo *info)
+        {
+            pthread_rwlock_wrlock(&_rwlock);
+            auto e = _table.find(url);
+            if(e==_table.end())
+            {
+                pthread_rwlock_destroy(&_rwlock);
+                return false;
+            }
+            *info=e->second;
+            pthread_rwlock_destroy(&_rwlock);
+            return true;
+        }
+        bool GetOneByRealPath(const std::string &realpath,BackupInfo *info)
+        {
+            pthread_rwlock_wrlock(&_rwlock);
+            auto e = _table.begin();
+            for(;e!=_table.end();++e)
+            {
+                if(e->second.real_path==realpath)
+                {
+                    *info=e->second;
+                    pthread_rwlock_destroy(&_rwlock);
+                    return true;
+                }
+            }
+            pthread_rwlock_destroy(&_rwlock);
+            return false;
+        }
+        bool GetAll(std::vector<BackupInfo> *arry)
+        {
+            pthread_rwlock_wrlock(&_rwlock);
+            auto e=_table.begin();
+            for(;e!=_table.end();++e)
+            {
+                arry->push_back(e->second);
+            }
+            pthread_rwlock_destroy(&_rwlock);
+            return true;
+        }
+        bool storage()
+        {
+            //获取数据
+            std::vector<BackupInfo> arry;
+            this->GetAll(&arry);
+            //存储到Json中
+            Json::Value root;
+            for(int i=0;i<arry.size();i++)
+            {
+                Json::Value tmp;
+                tmp["pack_flag"]=arry[i].pack_flag;
+                tmp["fsize"]=(Json::Int64)arry[i].fsize;//类型转换
+                tmp["atime"]=(Json::Int64)arry[i].atime;
+                tmp["mtime"]=(Json::Int64)arry[i].mtime;
+                tmp["pack_path"]=arry[i].pack_path;
+                tmp["real_path"]=arry[i].real_path;
+                tmp["url_path"]=arry[i].url_path;
+                root.append(tmp);
+            }
+            //序列化
+            std::string body;
+            JsonUtil::Serialize(root,&body);
+            //重新写入文件
+            FileUtil fu(_backup_file);
+            fu.SetContent(body);
+            return true;
+        }
+        //初始化加载,从配置文件中加载的
+        bool InitLoad()
+        {
+            //获取数据文件中的数据
+            FileUtil fu(_backup_file);
+            if(fu.Exists()==false)//判断文件是否存在
+            {
+                return true;
+            }
+            std::string body;
+            fu.GetContent(&body);
+            //反序列化
+            Json::Value root;
+            JsonUtil::UnSerialize(body,&root);
+            //将反序列化后的Json::Value数据添加到table中
+            for(int i=0;i<root.size();i++)
+            {
+                BackupInfo info;
+                info.pack_flag=root[i]["pack_flag"].asBool();
+                info.fsize=root[i]["fsize"].asInt64();
+                info.atime=root[i]["atime"].asInt64();
+                info.mtime=root[i]["mtime"].asInt64();
+                info.pack_path=root[i]["pack_path"].asString();
+                info.real_path=root[i]["real_path"].asString();
+                info.url_path=root[i]["url_path"].asString();
+                Insert(info);
+            }
+        }
+
     };
 }
-
-#endif
