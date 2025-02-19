@@ -1,6 +1,7 @@
 #include "util.hpp"
 #include "config.hpp"
 #include "data.hpp"
+#include "hot.hpp"
 
 void FileUtilTest(const std::string &filename)
 {
@@ -145,11 +146,20 @@ void DataTest(const std::string &filename)
     */
 }
 
+cloud::DataManager *_data;
+void HotTest()
+{
+    _data = new cloud::DataManager();
+    cloud::HotManager hot;
+    hot.RunModule();
+}
+
 int main(int argc,char *argv[])
 {
     //FileUtilTest(argv[1]);
     //JsonUtilTest();
     //ConfigTest();
-    DataTest(argv[1]);
+    //DataTest(argv[1]);
+    HotTest();
     return 0;
 }

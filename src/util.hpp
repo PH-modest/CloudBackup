@@ -1,5 +1,4 @@
-#ifndef __MY_UTIL__
-#define __MY_UTIL__
+#pragma once
 #include<iostream>
 #include<vector>
 #include<string>
@@ -20,6 +19,16 @@ namespace cloud
         FileUtil(const std::string &FileName)
         :_filename(FileName)
         {}
+        //删除文件
+        bool Remove()
+        {
+            if(this->Exists()==false)
+            {
+                return true;
+            }
+            remove(_filename.c_str());
+            return true;
+        }
         //获取文件大小
         int64_t FileSize()
         {
@@ -232,4 +241,3 @@ namespace cloud
         }
     };
 }
-#endif

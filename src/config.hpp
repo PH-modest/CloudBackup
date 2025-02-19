@@ -1,5 +1,4 @@
-#ifndef __MY_CONFIG__
-#define __MY_CONFIG__
+#pragma once
 #include <mutex>
 #include "util.hpp"
 
@@ -101,5 +100,3 @@ namespace cloud
     Config *Config::_instance = NULL;
     std::mutex Config::_mutex;
 }
-
-#endif
