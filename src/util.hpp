@@ -183,7 +183,7 @@ namespace cloud
         //创建目录
         bool CreateDirectory()
         {
-            if(this->Exists()==true)
+            if(this->Exists()==true)                 
             {
                 return true;
             }

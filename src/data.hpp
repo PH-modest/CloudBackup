@@ -113,6 +113,7 @@ namespace cloud
             pthread_rwlock_destroy(&_rwlock);
             return true;
         }
+        //存储
         bool storage()
         {
             //获取数据
