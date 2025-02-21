@@ -16,6 +16,7 @@ namespace cloud
     private:
         static void Upload(const httplib::Request &req,httplib::Response &rsp)
         {
+            printf("----------Upload-----------\n");
             //post /upload    文件数据在正文中（正文并不全是文件数据）
             //首先判断有没有上传的文件区域
             auto ret = req.has_file("file");
@@ -24,6 +25,7 @@ namespace cloud
                 rsp.status = 400;
                 return;
             }
+            // DEGUG printf("----------有文件-----------\n");
             //获取数据
             const auto& file = req.get_file_value("file");
             // file.filename//文件名称
@@ -35,6 +37,7 @@ namespace cloud
             BackupInfo info;
             info.NewBackupInfo(realpath);//组织备份的文件信息
             _data->Insert(info);//向数据管理模块添加备份的文件信息
+            // DEBUG printf("----------Upload运行结束-----------\n");
             return;
         }
         static void ListShow(const httplib::Request &req,httplib::Response &rsp){}
@@ -52,12 +55,15 @@ namespace cloud
         bool RunModule()
         {
             //创建映射关系
+            printf("-----------RunModule-------------\n");
             _server.Post("/upload",Upload);
+            //DEBUG printf("-----------Post upload-------------\n");
             _server.Get("/listshow",ListShow);
             _server.Get("/",ListShow);
             std::string download_url = _download_prefix + "(.*)";//避免下载前缀路径变化
             _server.Get(download_url,Download);//匹配任意字符任意次
             _server.listen(_server_ip.c_str(),_server_port);
+            //DEBUG printf("------------RunModule运行结束------------\n");
             return true;
         }
     };
