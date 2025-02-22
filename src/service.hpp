@@ -55,7 +55,7 @@ namespace cloud
         bool RunModule()
         {
             //创建映射关系
-            printf("-----------RunModule-------------\n");
+            //DEBUG printf("-----------RunModule-------------\n");
             _server.Post("/upload",Upload);
             //DEBUG printf("-----------Post upload-------------\n");
             _server.Get("/listshow",ListShow);
@@ -63,6 +63,14 @@ namespace cloud
             std::string download_url = _download_prefix + "(.*)";//避免下载前缀路径变化
             _server.Get(download_url,Download);//匹配任意字符任意次
             _server.listen(_server_ip.c_str(),_server_port);
+            // //Debug
+            // printf("Server starting on %s:%d...\n", _server_ip.c_str(), _server_port);
+            // if (_server.listen(_server_ip.c_str(), _server_port)) {
+            //     printf("Server started successfully!\n");
+            //     //do Something
+            // } else {
+            //     printf("Failed to start server!\n");
+            // }
             //DEBUG printf("------------RunModule运行结束------------\n");
             return true;
         }

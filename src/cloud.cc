@@ -150,7 +150,6 @@ void DataTest(const std::string &filename)
 cloud::DataManager *_data;
 void HotTest()
 {
-    _data = new cloud::DataManager();
     cloud::HotManager hot;
     hot.RunModule();
 }
