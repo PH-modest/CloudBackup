@@ -40,7 +40,35 @@ namespace cloud
             // DEBUG printf("----------Upload运行结束-----------\n");
             return;
         }
-        static void ListShow(const httplib::Request &req,httplib::Response &rsp){}
+        static std::string TimetoStr(time_t t)
+        {
+            std::string tmp = std::ctime(&t);
+            return tmp;
+        }
+        static void ListShow(const httplib::Request &req,httplib::Response &rsp)
+        {
+            //1. 获取所有的文件备份信息
+            std::vector<BackupInfo> arry;
+            _data->GetAll(&arry);
+            //2. 根据所有备份信息，组织html文件数据
+            std::stringstream ss;
+            ss<<"<html><head><title>Download</title></head>";
+            ss<<"<body><h1>Download</h1><table>";
+            for(auto &a : arry)
+            {
+                ss<<"<tr>";
+                std::string filename = FileUtil(a.real_path).FileName();
+                ss<<"<td><a href='"<<a.url_path<<"'>"<<filename<<"</a></td>";
+                ss<<"<td align='right'>"<<TimetoStr(a.mtime)<<"</td>";
+                ss<<"<td align='right'>"<<a.fsize/1024<<"k</td>";
+                ss<<"</tr>";
+            }
+            ss<<"</table></body></html>";
+            rsp.body = ss.str();
+            rsp.set_header("Content-Type","text/html");
+            rsp.status = 200;
+            return;
+        }
         static void Download(const httplib::Request &req,httplib::Response &rsp){}
     public:
         Service()
