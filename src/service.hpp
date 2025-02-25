@@ -81,20 +81,22 @@ namespace cloud
             rsp.status = 200;
             return;
         }
-        static void No(const httplib::Request& req, httplib::Response& rsp)
-        {
-            rsp.body.clear();
-            rsp.body = R"(<!DOCTYPE html><html lang="zh"><head>)";
-            rsp.body += R"(<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">)";
-            rsp.body += R"(<title>中央红色字体</title><style>)";
-            rsp.body += R"(body {height: 100vh;margin: 0;display: flex;justify-content: center;align-items: center;background-color:#f0f0f0;})";
-            rsp.body += R"(.content {font-size: 48px;color: red;})";
-            rsp.body += R"(</style></head><body><div class="content">)";
-            rsp.body += "客户端请求的语法错误，服务器无法理解 400!!!";
-            rsp.body += R"(</div></body></html>)";
-            rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-            rsp.status = 400;
-        }
+
+        // //DEBUG
+        // static void No(const httplib::Request& req, httplib::Response& rsp)
+        // {
+        //     rsp.body.clear();
+        //     rsp.body = R"(<!DOCTYPE html><html lang="zh"><head>)";
+        //     rsp.body += R"(<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">)";
+        //     rsp.body += R"(<title>中央红色字体</title><style>)";
+        //     rsp.body += R"(body {height: 100vh;margin: 0;display: flex;justify-content: center;align-items: center;background-color:#f0f0f0;})";
+        //     rsp.body += R"(.content {font-size: 48px;color: red;})";
+        //     rsp.body += R"(</style></head><body><div class="content">)";
+        //     rsp.body += "客户端请求的语法错误，服务器无法理解 400!!!";
+        //     rsp.body += R"(</div></body></html>)";
+        //     rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+        //     rsp.status = 400;
+        // }
 
         static void Download(const httplib::Request &req,httplib::Response &rsp){}
     public:
@@ -117,8 +119,8 @@ namespace cloud
             _server.Get("/listshow/",ListShow);
             _server.Get("/",ListShow);
 
-
-            // // 设置自定义日志记录器
+            ////DEBUG
+            ////设置自定义日志记录器
             // _server.set_logger([](const httplib::Request& req, const httplib::Response& res) {
             //     // 打印请求日志
             //     std::cout << "Request:" << std::endl;
