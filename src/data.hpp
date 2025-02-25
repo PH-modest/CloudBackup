@@ -104,13 +104,14 @@ namespace cloud
         }
         bool GetAll(std::vector<BackupInfo> *arry)
         {
+            std::cout<<"call GetAll"<<std::endl;
             pthread_rwlock_wrlock(&_rwlock);
             auto e=_table.begin();
             for(;e!=_table.end();++e)
             {
                 arry->push_back(e->second);
             }
-            pthread_rwlock_destroy(&_rwlock);
+            pthread_rwlock_unlock(&_rwlock); //这里是解锁 不是把锁销毁
             return true;
         }
         //存储
