@@ -59,9 +59,8 @@ namespace cloud
                     _instance = new Config();
                 }
                 _mutex.unlock();
-                return _instance;
             }
-            
+            return _instance;
         }
         int GetHotTime()
         {

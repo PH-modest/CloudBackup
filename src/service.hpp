@@ -16,7 +16,7 @@ namespace cloud
     private:
         static void Upload(const httplib::Request &req,httplib::Response &rsp)
         {
-            printf("----------Upload-----------\n");
+            //printf("----------Upload-----------\n");
             //post /upload    文件数据在正文中（正文并不全是文件数据）
             //首先判断有没有上传的文件区域
             auto ret = req.has_file("file");
@@ -47,17 +47,9 @@ namespace cloud
         }
         static void ListShow(const httplib::Request &req,httplib::Response &rsp)
         {
-            std::cout<<"call ListShow"<<std::endl; // 未打印 回调未调用
             //1. 获取所有的文件备份信息
             std::vector<BackupInfo> arry;
-
-            std::cout<<"GetAll before"<<std::endl;
-
             _data->GetAll(&arry);
-
-            std::cout<<"GetAll after"<<std::endl;
-
-
             //2. 根据所有备份信息，组织html文件数据
             std::stringstream ss;
 
@@ -73,9 +65,6 @@ namespace cloud
                ss<<"</tr>";
             }
             ss<<"</table></body></html>";
-            
-            //ss<<"hello world"<<std::endl; // DEBUG
-
             rsp.body = ss.str();
             rsp.set_header("Content-Type","text/html");
             rsp.status = 200;
@@ -98,7 +87,73 @@ namespace cloud
         //     rsp.status = 400;
         // }
 
-        static void Download(const httplib::Request &req,httplib::Response &rsp){}
+        //？？？？为什么这里是静态的？？？？
+        //因为下面的调用函数是静态的
+        static std::string GetETag(const BackupInfo &info)
+        {
+            //etag : filename-fsize-mtime
+            FileUtil fu(info.real_path);
+            std::string etag = fu.FileName();
+            etag += "-";
+            etag += std::to_string(info.fsize);
+            etag += "-";
+            etag += std::to_string(info.mtime);
+            return etag;
+        }
+        static void Download(const httplib::Request &req,httplib::Response &rsp)
+        {
+            //1. 获取客户端请求的资源路径path    req.path
+            //2. 根据资源路径，获取文件备份信息
+            BackupInfo info;
+            _data->GetOneByURL(req.path,&info);
+            //3. 判断文件是否被压缩，如果被压缩，要先解压缩
+            if(info.pack_flag == true)
+            {
+                FileUtil fu(info.pack_path);
+                fu.UnCompress(info.real_path);//将文件解压到备份目录下
+                //4. 删除压缩包，修改备份信息（已经没有被压缩）
+                fu.Remove();
+                info.pack_flag = false;
+                _data->Update(info);
+            }
+            //5. 读取文件数据，放入rsp.body中
+            FileUtil fu(info.real_path);
+
+            //如果没有If-Range字段则是正常下载，或者如果有这个字段，
+            //但是他的值与当前文件的etag不一致，则也必须中心返回全部数据
+            bool retrans = false;//标记当前是否是断点续传
+            std::string old_etag;
+            if(req.has_header("If-Range"));
+            {
+                old_etag = req.get_header_value("If-Range");
+                //有If-range字段，且这个字段的值与请求文件的最新etag一直则符合断点续传
+                if(old_etag == GetETag(info))
+                {
+                    retrans = true;
+                }
+            }
+            
+            if(retrans == false)
+            {
+                fu.GetContent(&rsp.body);
+                //6. 设置响应头部字段：ETag ， Accept-Ranges: bytes
+                rsp.set_header("Accept-Ranges:","bytes");
+                rsp.set_header("ETag",GetETag(info));
+                rsp.set_header("Content-Type","application/octet-stream");
+                rsp.status = 200;
+            }
+            else
+            {
+                //httplib内部实现了对于区间请求也就是断点续传请求的处理
+                //只需要我们用户将文件所有数据读取到rsp.body中，他们内部会自动根据请求区间，从body中取出指定区间数据进行响应
+                //std::string range = req.get_header_val("Range"); 解析bytes=start-end
+                fu.GetContent(&rsp.body);
+                rsp.set_header("Accept-Ranges:","bytes");
+                rsp.set_header("ETag",GetETag(info));
+                //rsp.set_header("Content-Range","bytes start-end/fsize");
+                rsp.status = 206;
+            }
+        }
     public:
         Service()
         {
@@ -132,15 +187,16 @@ namespace cloud
             //     std::cout << "Response:" << std::endl;
             //     std::cout << "  Status: " << res.status << std::endl;
             //     std::cout << "  Version: " << res.version << std::endl;
-            // });
+            // };
 
             std::string download_url = _download_prefix + "(.*)";//避免下载前缀路径变化
             _server.Get(download_url,Download);//匹配任意字符任意次
 
-                        // 其他没有协商的请求
-            _server.Get("/(.*)", No);
-            //_server.listen(_server_ip.c_str(),_server_port);
-            _server.listen("0.0.0.0",8101);
+            // 其他没有协商的请求
+            //_server.Get("/(.*)", No);
+
+            _server.listen(_server_ip.c_str(),_server_port);
+
             // //Debug
             // printf("Server starting on %s:%d...\n", _server_ip.c_str(), _server_port);
             // if (_server.listen(_server_ip.c_str(), _server_port)) {
@@ -150,6 +206,7 @@ namespace cloud
             //     printf("Failed to start server!\n");
             // }
             //DEBUG printf("------------RunModule运行结束------------\n");
+
             return true;
         }
     };

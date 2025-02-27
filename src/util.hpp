@@ -35,7 +35,8 @@ namespace cloud
             struct stat st;
             if(stat(_filename.c_str(),&st) < 0)
             {
-                std::cout<<"Get file size failed!\n";
+                //std::cout<<"Get file size failed!\n";
+                std::cout<<"Get file size failed,errno: "<<strerror(errno)<<std::endl;
                 return -1;
             }
             return st.st_size;
@@ -46,7 +47,7 @@ namespace cloud
             struct stat st;
             if(stat(_filename.c_str(),&st) < 0)
             {
-                std::cout<<"Get file size failed!\n";
+                std::cout<<"Get file size failed!,errno:"<<strerror(errno)<<std::endl;
                 return -1;
             }
             return st.st_mtime;
@@ -57,7 +58,7 @@ namespace cloud
             struct stat st;
             if(stat(_filename.c_str(),&st) < 0)
             {
-                std::cout<<"Get file size failed!\n";
+                std::cout<<"Get file size failed,errno:"<<strerror(errno)<<std::endl;
                 return -1;
             }
             return st.st_atime;

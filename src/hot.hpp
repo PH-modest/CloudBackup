@@ -16,7 +16,7 @@ namespace cloud
         int _hot_time;//热点时间
     private:
         //判断文件是否是热点文件,如果是非热点文件 -> 返回true
-        bool HotJudge(std::string &filename)
+        bool HotJudge(const std::string &filename)
         {
             FileUtil fu(filename);
             time_t last_atime = fu.LastATime();

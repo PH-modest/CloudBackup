@@ -62,7 +62,7 @@ namespace cloud
             pthread_rwlock_wrlock(&_rwlock);
             _table[info.url_path]=info;
             pthread_rwlock_unlock(&_rwlock);
-            storage();
+            Storage();
             return true;
         }
         bool Update(const BackupInfo &info)
@@ -70,7 +70,7 @@ namespace cloud
             pthread_rwlock_wrlock(&_rwlock);
             _table[info.url_path]=info;
             pthread_rwlock_unlock(&_rwlock);
-            storage();
+            Storage();
             return true;
         }
         bool GetOneByURL(const std::string &url,BackupInfo *info)
@@ -79,11 +79,13 @@ namespace cloud
             auto e = _table.find(url);
             if(e==_table.end())
             {
-                pthread_rwlock_destroy(&_rwlock);
+                //pthread_rwlock_destroy(&_rwlock);
+                pthread_rwlock_unlock(&_rwlock);
                 return false;
             }
             *info=e->second;
-            pthread_rwlock_destroy(&_rwlock);
+            //pthread_rwlock_destroy(&_rwlock);
+            pthread_rwlock_unlock(&_rwlock);
             return true;
         }
         bool GetOneByRealPath(const std::string &realpath,BackupInfo *info)
@@ -95,27 +97,29 @@ namespace cloud
                 if(e->second.real_path==realpath)
                 {
                     *info=e->second;
-                    pthread_rwlock_destroy(&_rwlock);
+                    //pthread_rwlock_destroy(&_rwlock);
+                    pthread_rwlock_unlock(&_rwlock);
                     return true;
                 }
             }
-            pthread_rwlock_destroy(&_rwlock);
+            //pthread_rwlock_destroy(&_rwlock);
+            pthread_rwlock_unlock(&_rwlock);
             return false;
         }
         bool GetAll(std::vector<BackupInfo> *arry)
         {
-            std::cout<<"call GetAll"<<std::endl;
+            //std::cout<<"call GetAll"<<std::endl;
             pthread_rwlock_wrlock(&_rwlock);
             auto e=_table.begin();
             for(;e!=_table.end();++e)
-            {
+            {  
                 arry->push_back(e->second);
             }
             pthread_rwlock_unlock(&_rwlock); //这里是解锁 不是把锁销毁
             return true;
         }
         //存储
-        bool storage()
+        bool Storage()
         {
             //获取数据
             std::vector<BackupInfo> arry;
@@ -169,6 +173,7 @@ namespace cloud
                 info.url_path=root[i]["url_path"].asString();
                 Insert(info);
             }
+            return true;
         }
 
     };
