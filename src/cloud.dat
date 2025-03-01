@@ -1,20 +1,29 @@
 [
 	{
-		"atime" : 1740530759,
-		"fsize" : 19,
-		"mtime" : 1740530759,
-		"pack_flag" : false,
-		"pack_path" : "./packdir/test.txt.lz",
-		"real_path" : "./backdir/test.txt",
-		"url_path" : "/download/test.txt"
+		"atime" : 1740830896,
+		"fsize" : 36443949,
+		"mtime" : 1740830896,
+		"pack_flag" : true,
+		"pack_path" : "./packdir/Linux.pdf.lz",
+		"real_path" : "./backdir/Linux.pdf",
+		"url_path" : "/download/Linux.pdf"
 	},
 	{
 		"atime" : 1740530738,
 		"fsize" : 257,
 		"mtime" : 1740530746,
-		"pack_flag" : false,
+		"pack_flag" : true,
 		"pack_path" : "./packdir/test.html.lz",
 		"real_path" : "./backdir/test.html",
 		"url_path" : "/download/test.html"
+	},
+	{
+		"atime" : 1740530759,
+		"fsize" : 19,
+		"mtime" : 1740530759,
+		"pack_flag" : true,
+		"pack_path" : "./packdir/test.txt.lz",
+		"real_path" : "./backdir/test.txt",
+		"url_path" : "/download/test.txt"
 	}
 ]
