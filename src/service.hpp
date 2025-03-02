@@ -126,7 +126,7 @@ namespace cloud
             if(req.has_header("If-Range"));
             {
                 old_etag = req.get_header_value("If-Range");
-                //有If-range字段，且这个字段的值与请求文件的最新etag一直则符合断点续传
+                //有If-range字段，且这个字段的值与请求文件的最新etag一致则符合断点续传
                 if(old_etag == GetETag(info))
                 {
                     retrans = true;
@@ -150,6 +150,7 @@ namespace cloud
                 fu.GetContent(&rsp.body);
                 rsp.set_header("Accept-Ranges:","bytes");
                 rsp.set_header("ETag",GetETag(info));
+                rsp.set_header("Content-Type","application/octet-stream");
                 //rsp.set_header("Content-Range","bytes start-end/fsize");
                 rsp.status = 206;
             }
