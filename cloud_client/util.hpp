@@ -41,7 +41,7 @@ namespace cloud
             return st.st_size;
         }
         //获取文件最后一次修改时间
-        time_t lastmtime()
+        time_t LastMTime()
         {
             struct stat st;
             if (stat(_filename.c_str(), &st) < 0)
@@ -66,15 +66,14 @@ namespace cloud
         std::string FileName()
         {
             //./abc/test.txt
-            size_t pos = _filename.find_last_of("/");
+            //size_t pos = _filename.find_last_of("/");
+            size_t pos = _filename.find_last_of("\\");
             if (pos == std::string::npos)
             {
                 return _filename;
             }
-            else
-            {
-                return _filename.substr(pos + 1);
-            }
+            //return fs::path(_filename).filename().string();
+            return _filename.substr(pos + 1);
         }
         //获取文件指定位置，指定长度的数据
         bool GetPosLen(std::string* body, size_t pos, size_t len)
