@@ -1,5 +1,5 @@
 .PHONY:cloud
-cloud:util.hpp cloud.cc 
+cloud:cloud.cc 
 	g++ -g -o $@ $^ -std=c++14 -L./lib -lpthread -lstdc++fs -ljsoncpp -lbundle
 .PHONY:clean
 clean:
