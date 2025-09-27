@@ -128,18 +128,22 @@ namespace cloud
             ss << ".download-btn:hover { background-color: #27ae60; transform: translateY(-2px); }";
             ss << ".download-btn:active { transform: translateY(0); }";
 
-            // 响应式调整
-            ss << "@media (max-width: 768px) {";
-            ss << ".file-table { font-size: 14px; }";
-            ss << ".file-table th, .file-table td { padding: 10px 8px; }";
-            ss << ".upload-form { flex-direction: column; }";
-            ss << ".upload-form input[type='file'], .upload-form input[type='submit'] { width: 100%; box-sizing: border-box; }";
-            ss << ".download-btn { padding: 6px 10px; font-size: 14px; }";
-            ss << "}";
+            // 在style中添加删除按钮样式
+            ss << ".delete-btn { display: inline-flex; align-items: center; gap: 5px; background-color: #e74c3c; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; text-decoration: none; font-weight: 500; transition: all 0.3s ease; }";
+            ss << ".delete-btn:hover { background-color: #c0392b; transform: translateY(-2px); }";
+            ss << ".delete-btn:active { transform: translateY(0); }";
             ss << "</style>";
             ss << "</head>";
-            ss << "<body>";
-            ss << "<h1>文件备份系统</h1>";
+            
+            // 添加JavaScript代码
+            ss << "<script>";
+            ss << "function confirmDelete(url, filename) {";
+            ss << "    var password = prompt('删除\"' + filename + '\"需要输入密码：', '');";
+            ss << "    if (password !== null) {";
+            ss << "        window.location.href = '/delete?url=' + encodeURIComponent(url) + '&password=' + encodeURIComponent(password);";
+            ss << "    }";
+            ss << "}";
+            ss << "</script>";        
 
             // 添加文件上传表单
             ss << "<div class='upload-container'>";
@@ -156,12 +160,23 @@ namespace cloud
 
             for (auto &a : arry)
             {
+                // 校验实际文件是否存在（原文件或压缩文件至少一个存在）
+                FileUtil real_file(a.real_path);
+                FileUtil pack_file(a.pack_path);
+                if (!real_file.Exists() && !pack_file.Exists()) {
+                    // 实际文件已删除，跳过该记录（不展示）
+                    continue;
+                }
+
                 ss << "<tr>";
                 std::string filename = FileUtil(a.real_path).FileName();
                 ss << "<td>" << filename << "</td>";
                 ss << "<td>" << TimetoStr(a.mtime) << "</td>";
                 ss << "<td>" << FormatFileSize(a.fsize) << "</td>";
-                ss << "<td><a href='" << a.url_path << "' class='download-btn'><i class='fas fa-download'></i> 下载</a></td>";
+                ss << "<td>";
+                ss << "<a href='" << a.url_path << "' class='download-btn'><i class='fas fa-download'></i> 下载</a> ";
+                ss << "<button class='delete-btn' onclick='confirmDelete(\"" << a.url_path << "\", \"" << filename << "\")'><i class='fas fa-trash'></i> 删除</button>";
+                ss << "</td>";
                 ss << "</tr>";
             }
 
@@ -174,6 +189,62 @@ namespace cloud
             rsp.status = 200;
             return;
         }
+
+        static void DeleteFile(const httplib::Request &req, httplib::Response &rsp)
+    {
+        // 1. 验证密码
+        std::string input_pwd = req.get_param_value("password");
+        const std::string correct_pwd = "111"; // 设定的密码
+        if (input_pwd != correct_pwd) {
+            rsp.status = 403; // 密码错误返回403
+            rsp.body = "密码错误，无法删除文件";
+            rsp.set_header("Content-Type", "text/plain; charset=UTF-8");
+            return;
+        }
+
+        // 2. 获取待删除文件的URL路径
+        std::string url_path = req.get_param_value("url");
+        if (url_path.empty()) {
+            rsp.status = 400; // 参数错误返回400
+            rsp.body = "缺少文件URL参数";
+            rsp.set_header("Content-Type", "text/plain; charset=UTF-8");
+            return;
+        }
+
+        // 3. 从数据管理中获取文件信息
+        BackupInfo info;
+        if (!_data->GetOneByURL(url_path, &info)) {
+            rsp.status = 404; // 文件不存在返回404
+            rsp.body = "文件不存在或已被删除";
+            rsp.set_header("Content-Type", "text/plain; charset=UTF-8");
+            return;
+        }
+
+        // 4. 删除服务器上的实际文件（原文件和压缩文件）
+        FileUtil real_file(info.real_path);
+        if (real_file.Exists()) {
+            real_file.Remove(); // 删除原文件
+        }
+        FileUtil pack_file(info.pack_path);
+        if (pack_file.Exists()) {
+            pack_file.Remove(); // 删除压缩文件（如果存在）
+        }
+
+        // 5. 调用DataManager的Delete方法删除数据记录
+        if (!_data->Delete(info)) {
+            rsp.status = 500; // 服务器错误返回500
+            rsp.body = "删除文件记录失败";
+            rsp.set_header("Content-Type", "text/plain; charset=UTF-8");
+            return;
+        }
+
+        // 6. 删除成功，重定向到文件列表页
+        rsp.status = 302;
+        rsp.set_header("Location", "/");
+        rsp.set_header("Cache-Control", "no-cache, no-store, must-revalidate"); // 禁止缓存
+        rsp.set_header("Pragma", "no-cache");
+        rsp.set_header("Expires", "0");
+    }
 
         // //DEBUG
         // static void No(const httplib::Request& req, httplib::Response& rsp)
@@ -277,6 +348,7 @@ namespace cloud
             _server.Post("/upload", Upload);
             // DEBUG printf("-----------Post upload-------------\n");
             _server.Get("/listshow/", ListShow);
+            _server.Get("/delete",DeleteFile);
             _server.Get("/", ListShow);
 
             ////DEBUG
