@@ -164,15 +164,10 @@ void ServiceTest()
 int main(int argc,char *argv[])
 {
     _data = new cloud::DataManager();
-    //FileUtilTest(argv[1]);
-    //JsonUtilTest();
-    //ConfigTest();
-    //DataTest(argv[1]);
-    //HotTest();
-    //ServiceTest();
     std::thread thread_hot_manager(HotTest);
     std::thread thread_service(ServiceTest);
     thread_hot_manager.join();
     thread_service.join();
+    delete _data;
     return 0;
 }

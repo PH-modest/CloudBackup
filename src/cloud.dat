@@ -25,5 +25,14 @@
 		"pack_path" : "./packdir/复习用思维导图.zip.lz",
 		"real_path" : "./backdir/复习用思维导图.zip",
 		"url_path" : "/download/复习用思维导图.zip"
+	},
+	{
+		"atime" : 1759940780,
+		"fsize" : 849,
+		"mtime" : 1759940780,
+		"pack_flag" : true,
+		"pack_path" : "./packdir/相关课程时长.txt.lz",
+		"real_path" : "./backdir/相关课程时长.txt",
+		"url_path" : "/download/相关课程时长.txt"
 	}
 ]
