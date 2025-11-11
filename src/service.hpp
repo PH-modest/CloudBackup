@@ -28,14 +28,14 @@ namespace cloud
     { // 内联
         // 尝试多个可能的路径，优先查找 templates/ 目录
         std::vector<std::string> possible_paths = {
-            "templates/" + filename,     // templates 目录（优先）
-            "./templates/" + filename,   // 当前目录下的 templates
-            filename,                    // 当前目录
-            "./" + filename,             // 当前目录（显式）
-            "../src/templates/" + filename,  // 从上级目录的src/templates
-            "src/templates/" + filename,     // src/templates子目录
+            "templates/" + filename,        // templates 目录（优先）
+            "./templates/" + filename,      // 当前目录下的 templates
+            filename,                       // 当前目录
+            "./" + filename,                // 当前目录（显式）
+            "../src/templates/" + filename, // 从上级目录的src/templates
+            "src/templates/" + filename,    // src/templates子目录
         };
-        
+
         std::string body;
         bool loaded = false;
         std::string used_path;
@@ -49,13 +49,13 @@ namespace cloud
                 break;
             }
         }
-        
+
         if (!loaded)
         {
             std::cerr << "LoadTemplate failed for: " << filename << " (tried multiple paths)" << std::endl;
             return "<h1>Error loading template: " + filename + "</h1>";
         }
-        
+
         for (const auto &p : placeholders)
         {
             size_t pos = 0;
@@ -131,11 +131,11 @@ namespace cloud
         {
             if (timestamp <= 0)
                 return "未知";
-            
+
             struct tm *timeinfo = localtime(&timestamp);
             if (!timeinfo)
                 return "未知";
-            
+
             char buffer[80];
             strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
             return std::string(buffer);
@@ -155,9 +155,9 @@ namespace cloud
         {
             if (pagination.total_pages <= 1)
                 return ""; // 只有一页或没有数据，不显示分页
-            
+
             std::string pagination_html = "<div class=\"pagination\">";
-            
+
             // 上一页按钮
             if (pagination.current_page > 1)
             {
@@ -168,18 +168,18 @@ namespace cloud
             {
                 pagination_html += "<span class=\"page-btn disabled\">上一页</span>";
             }
-            
+
             // 页码按钮
             int start_page = std::max(1, pagination.current_page - 2);
             int end_page = std::min(pagination.total_pages, pagination.current_page + 2);
-            
+
             if (start_page > 1)
             {
                 pagination_html += "<a href=\"" + base_url + "?page=1" + extra_params + "\" class=\"page-btn\">1</a>";
                 if (start_page > 2)
                     pagination_html += "<span class=\"page-ellipsis\">...</span>";
             }
-            
+
             for (int i = start_page; i <= end_page; i++)
             {
                 if (i == pagination.current_page)
@@ -191,14 +191,14 @@ namespace cloud
                     pagination_html += "<a href=\"" + base_url + "?page=" + std::to_string(i) + extra_params + "\" class=\"page-btn\">" + std::to_string(i) + "</a>";
                 }
             }
-            
+
             if (end_page < pagination.total_pages)
             {
                 if (end_page < pagination.total_pages - 1)
                     pagination_html += "<span class=\"page-ellipsis\">...</span>";
                 pagination_html += "<a href=\"" + base_url + "?page=" + std::to_string(pagination.total_pages) + extra_params + "\" class=\"page-btn\">" + std::to_string(pagination.total_pages) + "</a>";
             }
-            
+
             // 下一页按钮
             if (pagination.current_page < pagination.total_pages)
             {
@@ -209,11 +209,11 @@ namespace cloud
             {
                 pagination_html += "<span class=\"page-btn disabled\">下一页</span>";
             }
-            
-            pagination_html += "<span class=\"page-info\">共 " + std::to_string(pagination.total_items) + " 个文件，第 " + 
-                              std::to_string(pagination.current_page) + " / " + std::to_string(pagination.total_pages) + " 页</span>";
+
+            pagination_html += "<span class=\"page-info\">共 " + std::to_string(pagination.total_items) + " 个文件，第 " +
+                               std::to_string(pagination.current_page) + " / " + std::to_string(pagination.total_pages) + " 页</span>";
             pagination_html += "</div>";
-            
+
             return pagination_html;
         }
 
@@ -484,7 +484,7 @@ namespace cloud
             // 从 multipart/form-data 中获取 partition 参数
             // httplib 会将 multipart 中的非文件字段也放入 files map 中
             std::string partition = "private"; // 默认值
-            
+
             // 首先尝试从 params 中获取（URL 参数或已解析的表单数据）
             if (req.has_param("partition"))
             {
@@ -508,15 +508,15 @@ namespace cloud
                     }
                 }
             }
-            
+
             // 确保 partition 值有效
             if (partition != "public" && partition != "private")
             {
                 std::cerr << "Invalid partition value: '" << partition << "', using default: private" << std::endl;
                 partition = "private";
             }
-            
-            std::cerr << "Upload partition: " << partition << " (has_param: " << req.has_param("partition") 
+
+            std::cerr << "Upload partition: " << partition << " (has_param: " << req.has_param("partition")
                       << ", files.count: " << req.files.count("partition") << ")" << std::endl;
 
             Config *conf = Config::GetInstance();
@@ -595,10 +595,14 @@ namespace cloud
             int page_size = 10;
             if (req.has_param("page"))
             {
-                try {
+                try
+                {
                     page = std::stoi(req.get_param_value("page"));
-                    if (page < 1) page = 1;
-                } catch (...) {
+                    if (page < 1)
+                        page = 1;
+                }
+                catch (...)
+                {
                     page = 1;
                 }
             }
@@ -610,7 +614,7 @@ namespace cloud
             // 分离私有和公共文件，并按时间排序（最新的在前）
             std::vector<BackupInfo> private_files;
             std::vector<BackupInfo> public_files;
-            
+
             for (const auto &info : all)
             {
                 if (info.partition == "private")
@@ -628,10 +632,12 @@ namespace cloud
             }
 
             // 按上传时间排序（最新的在前）
-            std::sort(private_files.begin(), private_files.end(), 
-                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
-            std::sort(public_files.begin(), public_files.end(), 
-                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
+            std::sort(private_files.begin(), private_files.end(),
+                      [](const BackupInfo &a, const BackupInfo &b)
+                      { return a.mtime > b.mtime; });
+            std::sort(public_files.begin(), public_files.end(),
+                      [](const BackupInfo &a, const BackupInfo &b)
+                      { return a.mtime > b.mtime; });
 
             // 计算分页信息（私有和公共分别分页）
             int private_total = private_files.size();
@@ -653,7 +659,8 @@ namespace cloud
                 std::string size_str = std::to_string(info.fsize / 1024) + " KB";
                 std::string time_str = FormatTime(info.mtime);
                 std::string download_link = info.url_path;
-                std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
+                // std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
+                std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path) + "&partition=private&page=" + std::to_string(page);
                 std::string download_count_str = std::to_string(info.download_count);
 
                 private_table += "<tr>";
@@ -675,7 +682,8 @@ namespace cloud
                 std::string size_str = std::to_string(info.fsize / 1024) + " KB";
                 std::string time_str = FormatTime(info.mtime);
                 std::string download_link = info.url_path;
-                std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
+                //std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
+                std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path) + "&partition=public&page=" + std::to_string(page);
                 std::string download_count_str = std::to_string(info.download_count);
 
                 public_table += "<tr>";
@@ -725,7 +733,7 @@ namespace cloud
             placeholders["search_return_button"] = "";
             placeholders["show_private"] = "false";
             placeholders["show_public"] = "false";
-            
+
             rsp.body = LoadTemplate("main.html", placeholders);
             rsp.set_header("Content-Type", "text/html; charset=UTF-8");
         }
@@ -745,10 +753,14 @@ namespace cloud
             int page_size = 10;
             if (req.has_param("page"))
             {
-                try {
+                try
+                {
                     page = std::stoi(req.get_param_value("page"));
-                    if (page < 1) page = 1;
-                } catch (...) {
+                    if (page < 1)
+                        page = 1;
+                }
+                catch (...)
+                {
                     page = 1;
                 }
             }
@@ -760,7 +772,7 @@ namespace cloud
             // 分离私有和公共文件，并按时间排序
             std::vector<BackupInfo> private_files;
             std::vector<BackupInfo> public_files;
-            
+
             for (const auto &info : all)
             {
                 if (info.partition == "private")
@@ -777,10 +789,12 @@ namespace cloud
             }
 
             // 按上传时间排序（最新的在前）
-            std::sort(private_files.begin(), private_files.end(), 
-                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
-            std::sort(public_files.begin(), public_files.end(), 
-                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
+            std::sort(private_files.begin(), private_files.end(),
+                      [](const BackupInfo &a, const BackupInfo &b)
+                      { return a.mtime > b.mtime; });
+            std::sort(public_files.begin(), public_files.end(),
+                      [](const BackupInfo &a, const BackupInfo &b)
+                      { return a.mtime > b.mtime; });
 
             // 计算分页信息
             int private_total = private_files.size();
@@ -871,7 +885,7 @@ namespace cloud
             placeholders["search_return_button"] = "";
             placeholders["show_private"] = "true";
             placeholders["show_public"] = "false";
-            
+
             rsp.body = LoadTemplate("main.html", placeholders);
             rsp.set_header("Content-Type", "text/html; charset=UTF-8");
         }
@@ -891,10 +905,14 @@ namespace cloud
             int page_size = 10;
             if (req.has_param("page"))
             {
-                try {
+                try
+                {
                     page = std::stoi(req.get_param_value("page"));
-                    if (page < 1) page = 1;
-                } catch (...) {
+                    if (page < 1)
+                        page = 1;
+                }
+                catch (...)
+                {
                     page = 1;
                 }
             }
@@ -906,7 +924,7 @@ namespace cloud
             // 分离私有和公共文件，并按时间排序
             std::vector<BackupInfo> private_files;
             std::vector<BackupInfo> public_files;
-            
+
             for (const auto &info : all)
             {
                 if (info.partition == "private")
@@ -923,10 +941,12 @@ namespace cloud
             }
 
             // 按上传时间排序（最新的在前）
-            std::sort(private_files.begin(), private_files.end(), 
-                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
-            std::sort(public_files.begin(), public_files.end(), 
-                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
+            std::sort(private_files.begin(), private_files.end(),
+                      [](const BackupInfo &a, const BackupInfo &b)
+                      { return a.mtime > b.mtime; });
+            std::sort(public_files.begin(), public_files.end(),
+                      [](const BackupInfo &a, const BackupInfo &b)
+                      { return a.mtime > b.mtime; });
 
             // 计算分页信息
             int private_total = private_files.size();
@@ -1017,7 +1037,7 @@ namespace cloud
             placeholders["search_return_button"] = "";
             placeholders["show_private"] = "false";
             placeholders["show_public"] = "true";
-            
+
             rsp.body = LoadTemplate("main.html", placeholders);
             rsp.set_header("Content-Type", "text/html; charset=UTF-8");
         }
@@ -1031,9 +1051,8 @@ namespace cloud
                 return;
             }
             // 支持 keyword 和 query 两种参数名
-            std::string keyword = req.has_param("keyword") ? req.get_param_value("keyword") : 
-                              (req.has_param("query") ? req.get_param_value("query") : "");
-            
+            std::string keyword = req.has_param("keyword") ? req.get_param_value("keyword") : (req.has_param("query") ? req.get_param_value("query") : "");
+
             // 如果搜索关键词为空，重定向到主页面
             if (keyword.empty())
             {
@@ -1041,20 +1060,24 @@ namespace cloud
                 rsp.set_header("Location", "/main/");
                 return;
             }
-            
+
             // 获取分页参数
             int page = 1;
             int page_size = 10;
             if (req.has_param("page"))
             {
-                try {
+                try
+                {
                     page = std::stoi(req.get_param_value("page"));
-                    if (page < 1) page = 1;
-                } catch (...) {
+                    if (page < 1)
+                        page = 1;
+                }
+                catch (...)
+                {
                     page = 1;
                 }
             }
-            
+
             std::string user = GetUsername(req);
 
             std::vector<BackupInfo> all;
@@ -1063,14 +1086,14 @@ namespace cloud
             // 分离匹配的私有和公共文件
             std::vector<BackupInfo> private_files;
             std::vector<BackupInfo> public_files;
-            
+
             for (const auto &info : all)
             {
                 std::string fname = FileUtil(info.real_path).FileName();
                 // 文件名不匹配则跳过
                 if (fname.find(keyword) == std::string::npos)
                     continue;
-                
+
                 if (info.partition == "private")
                 {
                     // 权限过滤：只包含当前用户的私有文件或管理员可以看到所有
@@ -1086,10 +1109,12 @@ namespace cloud
             }
 
             // 按上传时间排序（最新的在前）
-            std::sort(private_files.begin(), private_files.end(), 
-                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
-            std::sort(public_files.begin(), public_files.end(), 
-                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
+            std::sort(private_files.begin(), private_files.end(),
+                      [](const BackupInfo &a, const BackupInfo &b)
+                      { return a.mtime > b.mtime; });
+            std::sort(public_files.begin(), public_files.end(),
+                      [](const BackupInfo &a, const BackupInfo &b)
+                      { return a.mtime > b.mtime; });
 
             // 计算分页信息
             int private_total = private_files.size();
@@ -1181,7 +1206,7 @@ namespace cloud
             placeholders["search_return_button"] = "<button onclick=\"window.location.href='/main/'\">返回</button>";
             placeholders["show_private"] = "false";
             placeholders["show_public"] = "false";
-            
+
             rsp.body = LoadTemplate("main.html", placeholders);
             rsp.set_header("Content-Type", "text/html; charset=UTF-8");
         }
@@ -1222,7 +1247,7 @@ namespace cloud
             // 如果 pack_flag = true，文件在 packdir 中（压缩文件）
             // 如果 pack_flag = false，文件在 backdir 中（源文件）
             bool delete_success = true;
-            
+
             if (info.pack_flag)
             {
                 // 文件被压缩，删除 packdir 中的压缩文件
@@ -1248,18 +1273,18 @@ namespace cloud
                 if (fu_real.Exists())
                 {
                     if (!fu_real.Remove())
-            {
-                std::cerr << "Failed to remove real_path: " << info.real_path << ", errno: " << strerror(errno) << std::endl;
-                delete_success = false;
-            }
+                    {
+                        std::cerr << "Failed to remove real_path: " << info.real_path << ", errno: " << strerror(errno) << std::endl;
+                        delete_success = false;
+                    }
                 }
                 else
-            {
+                {
                     std::cerr << "Source file not found: " << info.real_path << std::endl;
-                delete_success = false;
+                    delete_success = false;
                 }
             }
-            
+
             if (!delete_success)
             {
                 rsp.body = R"(<script>alert("文件在磁盘上未找到或删除失败！"); history.back();</script>)";
@@ -1272,7 +1297,26 @@ namespace cloud
             {
                 rsp.status = 302;
                 // 删除后重定向到主页面，显示所有文件
-                rsp.set_header("Location", "/main/?msg=delete_success");
+                // rsp.set_header("Location", "/main/?msg=delete_success");
+                // 根据传入的分区和分页信息重定向回原页面
+                std::string partition = req.get_param_value("partition");
+                std::string page = req.get_param_value("page");
+                std::string redirect_url = "/main/";
+
+                if (!partition.empty())
+                {
+                    redirect_url += partition + "/";
+                    if (!page.empty())
+                    {
+                        redirect_url += "?page=" + page;
+                    }
+                }
+                else
+                {
+                    redirect_url += "?msg=delete_success";
+                }
+
+                rsp.set_header("Location", redirect_url);
             }
             else
             {
@@ -1299,7 +1343,7 @@ namespace cloud
                 rsp.body = "File not found";
                 return;
             }
-            
+
             // 如果文件被压缩，需要从 packdir 解压到 backdir
             if (info.pack_flag)
             {
@@ -1311,7 +1355,7 @@ namespace cloud
                     rsp.body = "Compressed file not found";
                     return;
                 }
-                
+
                 // 确保 backdir 中的目标目录存在
                 std::string real_dir = info.real_path.substr(0, info.real_path.find_last_of('/'));
                 FileUtil(real_dir).CreateDirectory();
@@ -1323,13 +1367,13 @@ namespace cloud
                     rsp.body = "Failed to decompress file";
                     return;
                 }
-                
+
                 // 解压成功后，删除压缩文件（下次长时间未访问会再次压缩）
                 if (!fu_pack.Remove())
                 {
                     std::cerr << "Failed to remove compressed file: " << info.pack_path << std::endl;
                 }
-                
+
                 // 更新文件信息
                 FileUtil fu_real(info.real_path);
                 info.pack_flag = false;
@@ -1338,7 +1382,7 @@ namespace cloud
                 info.atime = time(nullptr); // 更新访问时间为当前时间
                 _data->Update(info);
             }
-            
+
             // 从 backdir 读取文件（此时文件一定在 backdir 中）
             FileUtil fu(info.real_path);
             if (!fu.Exists())
@@ -1350,20 +1394,20 @@ namespace cloud
 
             // 更新文件的访问时间
             time_t now = time(nullptr);
-            #ifdef _WIN32
-                // Windows 上更新访问时间
-                struct _utimbuf ut;
-                ut.actime = now;
-                ut.modtime = fu.LastMTime();
-                _utime(info.real_path.c_str(), &ut);
-            #else
-                // Linux 上更新访问时间
-                struct utimbuf ut;
-                ut.actime = now;
-                ut.modtime = fu.LastMTime();
-                utime(info.real_path.c_str(), &ut);
-            #endif
-            
+#ifdef _WIN32
+            // Windows 上更新访问时间
+            struct _utimbuf ut;
+            ut.actime = now;
+            ut.modtime = fu.LastMTime();
+            _utime(info.real_path.c_str(), &ut);
+#else
+            // Linux 上更新访问时间
+            struct utimbuf ut;
+            ut.actime = now;
+            ut.modtime = fu.LastMTime();
+            utime(info.real_path.c_str(), &ut);
+#endif
+
             // 更新 BackupInfo 中的访问时间
             info.atime = now;
 
@@ -1383,7 +1427,7 @@ namespace cloud
             rsp.set_header("ETag", GetETag(info));
             rsp.set_header("Content-Type", "application/octet-stream");
             rsp.status = retrans ? 206 : 200;
-            
+
             // 更新下载计数和访问时间
             info.download_count++;
             _data->Update(info);
