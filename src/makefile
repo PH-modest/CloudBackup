@@ -4,7 +4,3 @@ cloud:cloud.cc
 .PHONY:clean
 clean:
 	rm -f cloud
-
-# .PHONY: cloud
-# cloud:cloud.cc  util.hpp
-# 	g++ -g $^ -o $@ -L./lib -lpthread -lstdc++fs -ljsoncpp -lbundle

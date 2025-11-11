@@ -1,12 +1,74 @@
 #pragma once
-#include "data.hpp" //上传文件需要备份，就需要将文件放入进去
+#include "data.hpp"
 #include "httplib.h"
+#include "user_manager.hpp"
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
+#include <unordered_map>
+#include <vector>
+#include <cctype>
+#include <ctime>
+#include <regex>
+#include <experimental/filesystem>
+#ifdef _WIN32
+#include <sys/utime.h>
+#else
+#include <utime.h>
+#endif
 
 extern cloud::DataManager *_data;
+extern cloud::UserManager *_user_mgr;
 
 namespace cloud
 {
+    namespace fs = std::experimental::filesystem;
+    // 加载模板函数
+    inline std::string LoadTemplate(const std::string &filename, const std::unordered_map<std::string, std::string> &placeholders)
+    { // 内联
+        // 尝试多个可能的路径，优先查找 templates/ 目录
+        std::vector<std::string> possible_paths = {
+            "templates/" + filename,     // templates 目录（优先）
+            "./templates/" + filename,   // 当前目录下的 templates
+            filename,                    // 当前目录
+            "./" + filename,             // 当前目录（显式）
+            "../src/templates/" + filename,  // 从上级目录的src/templates
+            "src/templates/" + filename,     // src/templates子目录
+        };
+        
+        std::string body;
+        bool loaded = false;
+        std::string used_path;
+        for (const auto &path : possible_paths)
+        {
+            FileUtil fu(path);
+            if (fu.GetContent(&body))
+            {
+                loaded = true;
+                used_path = path;
+                break;
+            }
+        }
+        
+        if (!loaded)
+        {
+            std::cerr << "LoadTemplate failed for: " << filename << " (tried multiple paths)" << std::endl;
+            return "<h1>Error loading template: " + filename + "</h1>";
+        }
+        
+        for (const auto &p : placeholders)
+        {
+            size_t pos = 0;
+            std::string key = "{" + p.first + "}";
+            while ((pos = body.find(key, pos)) != std::string::npos)
+            {
+                body.replace(pos, key.length(), p.second);
+                pos += p.second.length();
+            }
+        }
+        return body;
+    }
+
     class Service
     {
     private:
@@ -15,402 +77,1482 @@ namespace cloud
         std::string _download_prefix;
         httplib::Server _server;
 
+        // 提取共享页面模板
+        static const std::string page_template;
+
     private:
-        static void Upload(const httplib::Request &req, httplib::Response &rsp)
+        static std::string EscapeHTML(const std::string &s)
         {
-            // printf("----------Upload-----------\n");
-            // post /upload    文件数据在正文中（正文并不全是文件数据）
-            // 首先判断有没有上传的文件区域
-            auto ret = req.has_file("file");
-            if (ret == false)
+            std::string res;
+            for (char c : s)
             {
-                rsp.status = 400;
-                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-                rsp.body = "<script>alert('请选择要上传的文件！'); window.location='/';</script>";
-                return;
+                switch (c)
+                {
+                case '<':
+                    res += "&lt;";
+                    break;
+                case '>':
+                    res += "&gt;";
+                    break;
+                case '&':
+                    res += "&amp;";
+                    break;
+                case '"':
+                    res += "&quot;";
+                    break;
+                case '\'':
+                    res += "&#39;";
+                    break;
+                default:
+                    res += c;
+                    break;
+                }
             }
-            // DEGUG printf("----------有文件-----------\n");
-            // 获取数据
-            const auto &file = req.get_file_value("file");
-
-            // 检查文件名是否为空或者无效
-            if (file.filename.empty() || file.filename == "." || file.filename == "..")
-            {
-                rsp.status = 400;
-                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-                rsp.body = "<script>alert('文件名无效！'); window.location='/';</script>";
-                return;
-            }
-
-            // file.filename//文件名称
-            // file.content//文件数据
-            std::string back_dir = Config::GetInstance()->GetBackDir();
-            std::string realpath = back_dir + FileUtil(file.filename).FileName(); // 调用FileUtil匿名对象
-                                                                                  // 再次检查文件名有效性
-            std::string filename = FileUtil(file.filename).FileName();
-            if (filename.empty() || filename == "." || filename == "..")
-            {
-                rsp.status = 400;
-                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-                rsp.body = "<script>alert('文件名无效！'); window.location='/';</script>";
-                return;
-            }
-            FileUtil fu(realpath);
-            fu.SetContent(file.content); // 将数据写入文件中
-            BackupInfo info;
-            info.NewBackupInfo(realpath); // 组织备份的文件信息
-            _data->Insert(info);          // 向数据管理模块添加备份的文件信息
-            // DEBUG printf("----------Upload运行结束-----------\n");
-
-            // 上传成功之后返回首页
-            rsp.status = 302;
-            rsp.set_header("Location", "/");
-            return;
-        }
-        static std::string TimetoStr(time_t t)
-        {
-            // std::string tmp = std::ctime(&t);
-            // return tmp;
-
-            struct tm *local_time = localtime(&t);
-            char time_str[100];
-            strftime(time_str, sizeof(time_str), "%Y年%m月%d日 %H:%M:%S", local_time);
-            return std::string(time_str);
+            return res;
         }
 
-        // 优化文件大小显示：小于1MB用KB（保留1位小数），1MB及以上用MB（保留2位小数）
-        static std::string FormatFileSize(size_t fsize)
+        static std::string EscapeJS(const std::string &s)
         {
-            // 转换为KB（1KB = 1024字节）
-            double size_kb = static_cast<double>(fsize) / 1024.0;
-
-            // 如果小于1MB（1024KB），用KB显示
-            if (size_kb < 1024.0)
+            std::string res;
+            for (char c : s)
             {
-                std::stringstream ss;
-                ss << std::fixed << std::setprecision(1) << size_kb << "KB";
-                return ss.str();
+                if (c == '\'')
+                    res += "\\'";
+                else if (c == '\\')
+                    res += "\\\\";
+                else
+                    res += c;
             }
-            // 1MB及以上用MB显示
+            return res;
+        }
+
+        // 格式化时间戳为可读格式
+        static std::string FormatTime(time_t timestamp)
+        {
+            if (timestamp <= 0)
+                return "未知";
+            
+            struct tm *timeinfo = localtime(&timestamp);
+            if (!timeinfo)
+                return "未知";
+            
+            char buffer[80];
+            strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+            return std::string(buffer);
+        }
+
+        // 分页辅助结构
+        struct PaginationInfo
+        {
+            int current_page;
+            int total_pages;
+            int page_size;
+            int total_items;
+        };
+
+        // 生成分页控件HTML
+        static std::string GeneratePagination(const PaginationInfo &pagination, const std::string &base_url, const std::string &extra_params = "")
+        {
+            if (pagination.total_pages <= 1)
+                return ""; // 只有一页或没有数据，不显示分页
+            
+            std::string pagination_html = "<div class=\"pagination\">";
+            
+            // 上一页按钮
+            if (pagination.current_page > 1)
+            {
+                int prev_page = pagination.current_page - 1;
+                pagination_html += "<a href=\"" + base_url + "?page=" + std::to_string(prev_page) + extra_params + "\" class=\"page-btn\">上一页</a>";
+            }
             else
             {
-                double size_mb = size_kb / 1024.0;
-                std::stringstream ss;
-                ss << std::fixed << std::setprecision(2) << size_mb << "MB";
-                return ss.str();
+                pagination_html += "<span class=\"page-btn disabled\">上一页</span>";
+            }
+            
+            // 页码按钮
+            int start_page = std::max(1, pagination.current_page - 2);
+            int end_page = std::min(pagination.total_pages, pagination.current_page + 2);
+            
+            if (start_page > 1)
+            {
+                pagination_html += "<a href=\"" + base_url + "?page=1" + extra_params + "\" class=\"page-btn\">1</a>";
+                if (start_page > 2)
+                    pagination_html += "<span class=\"page-ellipsis\">...</span>";
+            }
+            
+            for (int i = start_page; i <= end_page; i++)
+            {
+                if (i == pagination.current_page)
+                {
+                    pagination_html += "<span class=\"page-btn current\">" + std::to_string(i) + "</span>";
+                }
+                else
+                {
+                    pagination_html += "<a href=\"" + base_url + "?page=" + std::to_string(i) + extra_params + "\" class=\"page-btn\">" + std::to_string(i) + "</a>";
+                }
+            }
+            
+            if (end_page < pagination.total_pages)
+            {
+                if (end_page < pagination.total_pages - 1)
+                    pagination_html += "<span class=\"page-ellipsis\">...</span>";
+                pagination_html += "<a href=\"" + base_url + "?page=" + std::to_string(pagination.total_pages) + extra_params + "\" class=\"page-btn\">" + std::to_string(pagination.total_pages) + "</a>";
+            }
+            
+            // 下一页按钮
+            if (pagination.current_page < pagination.total_pages)
+            {
+                int next_page = pagination.current_page + 1;
+                pagination_html += "<a href=\"" + base_url + "?page=" + std::to_string(next_page) + extra_params + "\" class=\"page-btn\">下一页</a>";
+            }
+            else
+            {
+                pagination_html += "<span class=\"page-btn disabled\">下一页</span>";
+            }
+            
+            pagination_html += "<span class=\"page-info\">共 " + std::to_string(pagination.total_items) + " 个文件，第 " + 
+                              std::to_string(pagination.current_page) + " / " + std::to_string(pagination.total_pages) + " 页</span>";
+            pagination_html += "</div>";
+            
+            return pagination_html;
+        }
+
+        static bool IsLoggedIn(const httplib::Request &req)
+        {
+            std::string user = GetUsername(req);
+            return !user.empty() && _user_mgr->UserExists(user);
+        }
+
+        static std::string GetUsername(const httplib::Request &req)
+        {
+            if (req.has_header("Cookie"))
+            {
+                std::string cookie = req.get_header_value("Cookie");
+                size_t start = cookie.find("username=");
+                if (start != std::string::npos)
+                {
+                    start += 9;
+                    size_t end = cookie.find(';', start);
+                    if (end == std::string::npos)
+                    {
+                        end = cookie.length();
+                    }
+                    std::string user = cookie.substr(start, end - start);
+                    user.erase(0, user.find_first_not_of(" \t"));
+                    user.erase(user.find_last_not_of(" \t") + 1);
+                    return user;
+                }
+            }
+            return "";
+        }
+
+        static bool IsAdmin(const std::string &user)
+        {
+            return user == "admin";
+        }
+
+        static void Logout(const httplib::Request &req, httplib::Response &rsp)
+        {
+            rsp.set_header("Set-Cookie", "username=; Max-Age=0; Path=/");
+            rsp.status = 302;
+            rsp.set_header("Location", "/login");
+        }
+
+        static void Login(const httplib::Request &req, httplib::Response &rsp)
+        {
+            if (req.method == "GET")
+            {
+                std::unordered_map<std::string, std::string> placeholders;
+                rsp.body = LoadTemplate("login.html", placeholders);
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                return;
+            }
+            else if (req.method == "POST")
+            {
+                auto params = req.params;
+                auto it_user = params.find("username");
+                auto it_pass = params.find("password");
+                if (it_user != params.end() && it_pass != params.end())
+                {
+                    std::string user = it_user->second;
+                    std::string pass = it_pass->second;
+                    std::string stored_pass;
+                    if (_user_mgr->GetPassword(user, &stored_pass) && stored_pass == pass)
+                    {
+                        rsp.set_header("Set-Cookie", "username=" + user + "; Max-Age=3600; Path=/");
+                        rsp.status = 302;
+                        rsp.set_header("Location", "/main/");
+                        return;
+                    }
+                }
+                rsp.status = 401;
+                rsp.body = R"(<script>alert("登录失败！"); window.location='/login';</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
             }
         }
 
-        static void ListShow(const httplib::Request &req, httplib::Response &rsp)
+        static void Register(const httplib::Request &req, httplib::Response &rsp)
         {
-            // 1. 获取所有的文件备份信息
-            std::vector<BackupInfo> arry;
-            _data->GetAll(&arry);
-
-            // 按上传时间排序
-            std::sort(arry.begin(), arry.end(), [](const BackupInfo &a, const BackupInfo &b)
-                      { return a.mtime > b.mtime; });
-
-            // 2. 组织带上传功能和美化样式的html内容
-            std::stringstream ss;
-            ss << "<!DOCTYPE html>";
-            ss << "<html lang='zh-CN'>";
-            ss << "<head>";
-            ss << "<meta charset='UTF-8'>";
-            ss << "<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
-            ss << "<title>文件备份系统</title>";
-            ss << "<link rel='stylesheet' href='https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css'>";
-            ss << "<style>";
-            // 基础样式
-            ss << "body { font-family: 'Microsoft YaHei', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background-color: #f5f7fa; color: #333; }";
-            ss << "h1 { color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 15px; margin-bottom: 30px; text-align: center; }";
-
-            // 上传表单样式
-            ss << ".upload-container { background-color: white; padding: 25px; border-radius: 8px; box-shadow: 0 2px 15px rgba(0,0,0,0.08); margin-bottom: 30px; transition: box-shadow 0.3s ease; }";
-            ss << ".upload-container:hover { box-shadow: 0 5px 20px rgba(0,0,0,0.1); }";
-            ss << ".upload-form { display: flex; flex-wrap: wrap; gap: 15px; align-items: center; }";
-            ss << ".upload-form input[type='file'] { flex: 1; min-width: 250px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; background-color: #f9f9f9; }";
-            ss << ".upload-form input[type='submit'] { background-color: #3498db; color: white; border: none; padding: 10px 25px; border-radius: 4px; cursor: pointer; font-weight: 500; transition: all 0.3s ease; }";
-            ss << ".upload-form input[type='submit']:hover { background-color: #2980b9; transform: translateY(-2px); }";
-            ss << ".upload-form input[type='submit']:active { transform: translateY(0); }";
-
-            // 表格样式
-            ss << ".file-table { width: 100%; border-collapse: collapse; box-shadow: 0 2px 15px rgba(0,0,0,0.08); background-color: white; border-radius: 8px; overflow: hidden; }";
-            ss << ".file-table th { background-color: #3498db; color: white; padding: 14px 15px; text-align: left; font-weight: 500; }";
-            ss << ".file-table td { padding: 14px 15px; border-bottom: 1px solid #ecf0f1; }";
-            ss << ".file-table tr:last-child td { border-bottom: none; }";
-            ss << ".file-table tr:hover { background-color: #f8f9fa; transition: background-color 0.3s ease; }";
-            ss << ".table-container { overflow-x: auto; }";
-
-            // 下载按钮样式
-            ss << ".download-btn { display: inline-flex; align-items: center; gap: 5px; background-color: #2ecc71; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; text-decoration: none; font-weight: 500; transition: all 0.3s ease; }";
-            ss << ".download-btn:hover { background-color: #27ae60; transform: translateY(-2px); }";
-            ss << ".download-btn:active { transform: translateY(0); }";
-
-            // 在style中添加删除按钮样式
-            ss << ".delete-btn { display: inline-flex; align-items: center; gap: 5px; background-color: #e74c3c; color: white; border: none; padding: 8px 15px; border-radius: 4px; cursor: pointer; text-decoration: none; font-weight: 500; transition: all 0.3s ease; }";
-            ss << ".delete-btn:hover { background-color: #c0392b; transform: translateY(-2px); }";
-            ss << ".delete-btn:active { transform: translateY(0); }";
-            ss << "</style>";
-            ss << "</head>";
-
-            // 添加JavaScript代码
-            ss << "<script>";
-            ss << "function confirmDelete(url, filename) {";
-            ss << "    var password = prompt('删除\"' + filename + '\"需要输入密码：', '');";
-            ss << "    if (password !== null) {";
-            ss << "        window.location.href = '/delete?url=' + encodeURIComponent(url) + '&password=' + encodeURIComponent(password);";
-            ss << "    }";
-            ss << "}";
-            ss << "</script>";
-
-            // 添加文件上传表单
-            ss << "<div class='upload-container'>";
-            ss << "<form class='upload-form' action='/upload' method='post' enctype='multipart/form-data'>";
-            ss << "<input type='file' name='file' accept='*/*' />";
-            ss << "<input type='submit' value='上传文件' />";
-            ss << "</form>";
-            ss << "</div>";
-
-            // 文件列表表格
-            ss << "<div class='table-container'>";
-            ss << "<table class='file-table'>";
-            ss << "<tr><th>文件名</th><th>上传时间</th><th>文件大小</th><th>操作</th></tr>";
-
-            for (auto &a : arry)
+            if (req.method == "GET")
             {
-                // 校验实际文件是否存在（原文件或压缩文件至少一个存在）
-                FileUtil real_file(a.real_path);
-                FileUtil pack_file(a.pack_path);
-                if (!real_file.Exists() && !pack_file.Exists())
+                std::unordered_map<std::string, std::string> placeholders;
+                rsp.body = LoadTemplate("register.html", placeholders);
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                return;
+            }
+            else if (req.method == "POST")
+            {
+                auto params = req.params;
+                auto it_user = params.find("username");
+                auto it_pass = params.find("password");
+                auto it_confirm = params.find("confirm_password");
+                if (it_user != params.end() && it_pass != params.end() && it_confirm != params.end())
                 {
-                    // 实际文件已删除，跳过该记录（不展示）
-                    continue;
+                    std::string user = it_user->second;
+                    std::string pass = it_pass->second;
+                    std::string confirm = it_confirm->second;
+                    if (pass != confirm)
+                    {
+                        rsp.body = R"(<script>alert("密码不匹配！"); history.back();</script>)";
+                        rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                        rsp.status = 400;
+                        return;
+                    }
+                    if (_user_mgr->UserExists(user))
+                    {
+                        rsp.body = R"(<script>alert("用户已存在！"); history.back();</script>)";
+                        rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                        rsp.status = 409;
+                        return;
+                    }
+                    _user_mgr->AddUser(user, pass);
+                    rsp.status = 302;
+                    rsp.set_header("Location", "/login");
+                    return;
                 }
+                rsp.body = R"(<script>alert("注册失败！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 400;
+            }
+        }
 
-                ss << "<tr>";
-                std::string filename = FileUtil(a.real_path).FileName();
-                ss << "<td>" << filename << "</td>";
-                ss << "<td>" << TimetoStr(a.mtime) << "</td>";
-                ss << "<td>" << FormatFileSize(a.fsize) << "</td>";
-                ss << "<td>";
-                ss << "<a href='" << a.url_path << "' class='download-btn'><i class='fas fa-download'></i> 下载</a> ";
-                ss << "<button class='delete-btn' onclick='confirmDelete(\"" << a.url_path << "\", \"" << filename << "\")'><i class='fas fa-trash'></i> 删除</button>";
-                ss << "</td>";
-                ss << "</tr>";
+        static void UserInfo(const httplib::Request &req, httplib::Response &rsp)
+        {
+            if (!IsLoggedIn(req))
+            {
+                rsp.status = 302;
+                rsp.set_header("Location", "/login");
+                return;
+            }
+            std::string user = GetUsername(req);
+            if (req.method == "GET")
+            {
+                std::unordered_map<std::string, std::string> placeholders;
+                rsp.body = LoadTemplate("user_info.html", placeholders);
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                return;
+            }
+            else if (req.method == "POST")
+            {
+                auto params = req.params;
+                if (params.count("new_username"))
+                {
+                    std::string new_user = params.find("new_username")->second;
+                    if (_user_mgr->UserExists(new_user))
+                    {
+                        rsp.body = R"(<script>alert("新用户名已存在！"); history.back();</script>)";
+                    }
+                    else
+                    {
+                        _user_mgr->UpdateUsername(user, new_user);
+                        rsp.set_header("Set-Cookie", "username=" + new_user + "; Max-Age=3600; Path=/");
+                        rsp.body = R"(<script>alert("用户名修改成功！"); window.location='/user_info';</script>)";
+                    }
+                }
+                else if (params.count("current_password"))
+                {
+                    std::string current = params.find("current_password")->second;
+                    std::string new_pass = params.find("new_password")->second;
+                    std::string confirm = params.find("confirm_password")->second;
+                    std::string stored;
+                    if (_user_mgr->GetPassword(user, &stored) && stored == current && new_pass == confirm)
+                    {
+                        _user_mgr->UpdatePassword(user, new_pass);
+                        rsp.body = R"(<script>alert("密码修改成功！"); window.location='/login';</script>)";
+                    }
+                    else
+                    {
+                        rsp.body = R"(<script>alert("密码修改失败！"); history.back();</script>)";
+                    }
+                }
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+            }
+        }
+
+        static void Upload(const httplib::Request &req, httplib::Response &rsp)
+        {
+            if (!IsLoggedIn(req))
+            {
+                rsp.status = 302;
+                rsp.set_header("Location", "/login");
+                return;
             }
 
-            ss << "</table>";
-            ss << "</div>";
-            ss << "</body></html>";
+            std::string user = GetUsername(req);
+            if (!req.has_header("Content-Type") || req.get_header_value("Content-Type").find("multipart/form-data") == std::string::npos)
+            {
+                std::cerr << "Invalid Content-Type: " << req.get_header_value("Content-Type")
+                          << ", Body size: " << req.body.size() << std::endl;
+                rsp.body = R"(<script>alert("上传失败：无效的请求格式！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 400;
+                return;
+            }
 
-            rsp.body = ss.str();
+            if (req.files.empty() || req.files.find("file") == req.files.end())
+            {
+                std::cerr << "No file found in request." << std::endl;
+                rsp.body = R"(<script>alert("上传失败：没有选择文件！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 400;
+                return;
+            }
+
+            const auto &uploaded_file = req.files.find("file")->second;
+            std::string orig_filename = uploaded_file.filename;
+            std::string file_content = uploaded_file.content;
+
+            if (orig_filename.empty() || file_content.empty())
+            {
+                std::cerr << "Invalid file: Filename: " << orig_filename << ", Size: " << file_content.size() << std::endl;
+                rsp.body = R"(<script>alert("上传失败：文件无效或为空！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 400;
+                return;
+            }
+
+            if (file_content.size() > 100 * 1024 * 1024)
+            { // 添加大小上限检查，防止内存溢出
+                std::cerr << "File too large: " << file_content.size() << std::endl;
+                rsp.body = R"(<script>alert("文件太大！上限100MB"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 413;
+                return;
+            }
+
+            // Sanitize filename: 只清理危险字符（路径分隔符、控制字符等），保留中文字符
+            std::string filename = orig_filename;
+            // 移除路径分隔符和其他危险字符
+            std::string dangerous_chars = "/\\:*?\"<>|";
+            for (char c : dangerous_chars)
+            {
+                size_t pos = 0;
+                while ((pos = filename.find(c, pos)) != std::string::npos)
+                {
+                    filename.replace(pos, 1, "_");
+                    pos++;
+                }
+            }
+            // 移除控制字符（ASCII 0-31，除了常见的空白字符）
+            for (int i = 0; i < 32; i++)
+            {
+                if (i != 9 && i != 10 && i != 13) // 保留 tab, newline, carriage return
+                {
+                    char c = static_cast<char>(i);
+                    size_t pos = 0;
+                    while ((pos = filename.find(c, pos)) != std::string::npos)
+                    {
+                        filename.replace(pos, 1, "_");
+                        pos++;
+                    }
+                }
+            }
+            // 移除文件名末尾的点或空格（Windows 不允许）
+            while (!filename.empty() && (filename.back() == '.' || filename.back() == ' '))
+            {
+                filename.pop_back();
+            }
+            if (filename.empty())
+            {
+                std::cerr << "Sanitized filename empty. Original: " << orig_filename << std::endl;
+                rsp.body = R"(<script>alert("文件名无效！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 400;
+                return;
+            }
+
+            // 从 multipart/form-data 中获取 partition 参数
+            // httplib 会将 multipart 中的非文件字段也放入 files map 中
+            std::string partition = "private"; // 默认值
+            
+            // 首先尝试从 params 中获取（URL 参数或已解析的表单数据）
+            if (req.has_param("partition"))
+            {
+                partition = req.get_param_value("partition");
+            }
+            else
+            {
+                // 对于 multipart/form-data，非文件字段也会在 files 中
+                auto it = req.files.find("partition");
+                if (it != req.files.end())
+                {
+                    partition = it->second.content;
+                    // 移除可能的换行符和空白字符
+                    if (!partition.empty())
+                    {
+                        partition.erase(0, partition.find_first_not_of(" \t\r\n"));
+                        if (!partition.empty())
+                        {
+                            partition.erase(partition.find_last_not_of(" \t\r\n") + 1);
+                        }
+                    }
+                }
+            }
+            
+            // 确保 partition 值有效
+            if (partition != "public" && partition != "private")
+            {
+                std::cerr << "Invalid partition value: '" << partition << "', using default: private" << std::endl;
+                partition = "private";
+            }
+            
+            std::cerr << "Upload partition: " << partition << " (has_param: " << req.has_param("partition") 
+                      << ", files.count: " << req.files.count("partition") << ")" << std::endl;
+
+            Config *conf = Config::GetInstance();
+            std::string user_dir = (partition == "private" ? conf->GetPrivateDirPrefix() + user + "/" : partition + "/");
+            std::string final_dir = conf->GetBackDir() + user_dir;
+            FileUtil fu_dir(final_dir);
+            if (!fu_dir.CreateDirectory())
+            {
+                std::cerr << "Failed to create final dir: " << final_dir << ", errno: " << strerror(errno) << std::endl;
+                rsp.body = R"(<script>alert("上传失败：无法创建存储目录！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 500;
+                return;
+            }
+
+            std::string final_path = final_dir + filename;
+            if (FileUtil(final_path).Exists())
+            {
+                std::cerr << "File already exists: " << final_path << std::endl;
+                rsp.body = R"(<script>alert("文件已存在！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 409;
+                return;
+            }
+
+            // 直接写入最终路径
+            FileUtil fu_final(final_path);
+            if (!fu_final.SetContent(file_content))
+            {
+                std::cerr << "Failed to write file: " << final_path << ", errno: " << strerror(errno) << std::endl;
+                rsp.body = R"(<script>alert("上传失败：写入文件错误！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 500;
+                return;
+            }
+
+            // 完整性校验
+            if (fu_final.FileSize() != static_cast<int64_t>(file_content.size()))
+            {
+                std::cerr << "Size mismatch: expected " << file_content.size() << ", actual " << fu_final.FileSize() << std::endl;
+                fu_final.Remove();
+                rsp.body = R"(<script>alert("文件完整性校验失败！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 500;
+                return;
+            }
+
+            BackupInfo info;
+            if (!info.NewBackupInfo(final_path, user, partition))
+            {
+                fu_final.Remove();
+                rsp.body = R"(<script>alert("备份信息初始化失败！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 500;
+                return;
+            }
+            _data->Insert(info);
+
+            std::string redirect_path = (partition == "private" ? "/main/private/" : "/main/public/");
+            rsp.status = 302;
+            rsp.set_header("Location", redirect_path + "?msg=upload_success");
+        }
+
+        static void MainPage(const httplib::Request &req, httplib::Response &rsp)
+        {
+            if (!IsLoggedIn(req))
+            {
+                rsp.status = 302;
+                rsp.set_header("Location", "/login");
+                return;
+            }
+            std::string user = GetUsername(req);
+
+            // 获取分页参数
+            int page = 1;
+            int page_size = 10;
+            if (req.has_param("page"))
+            {
+                try {
+                    page = std::stoi(req.get_param_value("page"));
+                    if (page < 1) page = 1;
+                } catch (...) {
+                    page = 1;
+                }
+            }
+
+            // 读取所有备份信息
+            std::vector<BackupInfo> all;
+            _data->GetAll(&all);
+
+            // 分离私有和公共文件，并按时间排序（最新的在前）
+            std::vector<BackupInfo> private_files;
+            std::vector<BackupInfo> public_files;
+            
+            for (const auto &info : all)
+            {
+                if (info.partition == "private")
+                {
+                    // 只包含当前用户的私有文件或管理员可以看到所有
+                    if (info.uploader == user || IsAdmin(user))
+                    {
+                        private_files.push_back(info);
+                    }
+                }
+                else if (info.partition == "public")
+                {
+                    public_files.push_back(info);
+                }
+            }
+
+            // 按上传时间排序（最新的在前）
+            std::sort(private_files.begin(), private_files.end(), 
+                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
+            std::sort(public_files.begin(), public_files.end(), 
+                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
+
+            // 计算分页信息（私有和公共分别分页）
+            int private_total = private_files.size();
+            int private_total_pages = (private_total + page_size - 1) / page_size;
+            int private_start = (page - 1) * page_size;
+            int private_end = std::min(private_start + page_size, private_total);
+
+            int public_total = public_files.size();
+            int public_total_pages = (public_total + page_size - 1) / page_size;
+            int public_start = (page - 1) * page_size;
+            int public_end = std::min(public_start + page_size, public_total);
+
+            // 构建私有文件列表 HTML（当前页）
+            std::string private_table;
+            for (int i = private_start; i < private_end; i++)
+            {
+                const auto &info = private_files[i];
+                std::string fname = FileUtil(info.real_path).FileName();
+                std::string size_str = std::to_string(info.fsize / 1024) + " KB";
+                std::string time_str = FormatTime(info.mtime);
+                std::string download_link = info.url_path;
+                std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
+                std::string download_count_str = std::to_string(info.download_count);
+
+                private_table += "<tr>";
+                private_table += "<td>" + EscapeHTML(fname) + "</td>";
+                private_table += "<td>" + size_str + "</td>";
+                private_table += "<td>" + time_str + "</td>";
+                private_table += "<td>" + download_count_str + "</td>";
+                private_table += "<td><a href=\"" + download_link + "\" class=\"download-btn\">下载</a> ";
+                private_table += "<a href=\"" + delete_link + "\" class=\"delete-btn\" onclick=\"return confirm('确定删除？');\">删除</a></td>";
+                private_table += "</tr>";
+            }
+
+            // 构建公共文件列表 HTML（当前页）
+            std::string public_table;
+            for (int i = public_start; i < public_end; i++)
+            {
+                const auto &info = public_files[i];
+                std::string fname = FileUtil(info.real_path).FileName();
+                std::string size_str = std::to_string(info.fsize / 1024) + " KB";
+                std::string time_str = FormatTime(info.mtime);
+                std::string download_link = info.url_path;
+                std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
+                std::string download_count_str = std::to_string(info.download_count);
+
+                public_table += "<tr>";
+                public_table += "<td>" + EscapeHTML(fname) + "</td>";
+                public_table += "<td>" + EscapeHTML(info.uploader) + "</td>";
+                public_table += "<td>" + size_str + "</td>";
+                public_table += "<td>" + time_str + "</td>";
+                public_table += "<td>" + download_count_str + "</td>";
+                public_table += "<td><a href=\"" + download_link + "\" class=\"download-btn\">下载</a> ";
+                // 只有上传者或管理员可以删除
+                if (info.uploader == user || IsAdmin(user))
+                {
+                    public_table += "<a href=\"" + delete_link + "\" class=\"delete-btn\" onclick=\"return confirm('确定删除？');\">删除</a>";
+                }
+                public_table += "</td>";
+                public_table += "</tr>";
+            }
+
+            if (private_table.empty())
+                private_table = "<tr><td colspan=\"5\">暂无私有文件</td></tr>";
+            if (public_table.empty())
+                public_table = "<tr><td colspan=\"6\">暂无公共文件</td></tr>";
+
+            // 生成分页控件
+            PaginationInfo private_pagination;
+            private_pagination.current_page = page;
+            private_pagination.total_pages = private_total_pages > 0 ? private_total_pages : 1;
+            private_pagination.page_size = page_size;
+            private_pagination.total_items = private_total;
+            std::string private_pagination_html = GeneratePagination(private_pagination, "/main/");
+
+            PaginationInfo public_pagination;
+            public_pagination.current_page = page;
+            public_pagination.total_pages = public_total_pages > 0 ? public_total_pages : 1;
+            public_pagination.page_size = page_size;
+            public_pagination.total_items = public_total;
+            std::string public_pagination_html = GeneratePagination(public_pagination, "/main/");
+
+            // 使用 main.html 模板
+            std::unordered_map<std::string, std::string> placeholders;
+            placeholders["username"] = EscapeHTML(user);
+            placeholders["private_table"] = private_table;
+            placeholders["public_table"] = public_table;
+            placeholders["private_pagination"] = private_pagination_html;
+            placeholders["public_pagination"] = public_pagination_html;
+            placeholders["search_keyword"] = "";
+            placeholders["search_return_button"] = "";
+            placeholders["show_private"] = "false";
+            placeholders["show_public"] = "false";
+            
+            rsp.body = LoadTemplate("main.html", placeholders);
             rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-            rsp.status = 200;
-            return;
+        }
+
+        static void PrivatePage(const httplib::Request &req, httplib::Response &rsp)
+        {
+            if (!IsLoggedIn(req))
+            {
+                rsp.status = 302;
+                rsp.set_header("Location", "/login");
+                return;
+            }
+            std::string user = GetUsername(req);
+
+            // 获取分页参数
+            int page = 1;
+            int page_size = 10;
+            if (req.has_param("page"))
+            {
+                try {
+                    page = std::stoi(req.get_param_value("page"));
+                    if (page < 1) page = 1;
+                } catch (...) {
+                    page = 1;
+                }
+            }
+
+            // 读取所有备份信息
+            std::vector<BackupInfo> all;
+            _data->GetAll(&all);
+
+            // 分离私有和公共文件，并按时间排序
+            std::vector<BackupInfo> private_files;
+            std::vector<BackupInfo> public_files;
+            
+            for (const auto &info : all)
+            {
+                if (info.partition == "private")
+                {
+                    if (info.uploader == user || IsAdmin(user))
+                    {
+                        private_files.push_back(info);
+                    }
+                }
+                else if (info.partition == "public")
+                {
+                    public_files.push_back(info);
+                }
+            }
+
+            // 按上传时间排序（最新的在前）
+            std::sort(private_files.begin(), private_files.end(), 
+                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
+            std::sort(public_files.begin(), public_files.end(), 
+                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
+
+            // 计算分页信息
+            int private_total = private_files.size();
+            int private_total_pages = (private_total + page_size - 1) / page_size;
+            int private_start = (page - 1) * page_size;
+            int private_end = std::min(private_start + page_size, private_total);
+
+            int public_total = public_files.size();
+            int public_total_pages = (public_total + page_size - 1) / page_size;
+            int public_start = (page - 1) * page_size;
+            int public_end = std::min(public_start + page_size, public_total);
+
+            // 构建文件列表 HTML（当前页）
+            std::string private_table;
+            for (int i = private_start; i < private_end; i++)
+            {
+                const auto &info = private_files[i];
+                std::string fname = FileUtil(info.real_path).FileName();
+                std::string size_str = std::to_string(info.fsize / 1024) + " KB";
+                std::string time_str = FormatTime(info.mtime);
+                std::string download_link = info.url_path;
+                std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
+                std::string download_count_str = std::to_string(info.download_count);
+
+                private_table += "<tr>";
+                private_table += "<td>" + EscapeHTML(fname) + "</td>";
+                private_table += "<td>" + size_str + "</td>";
+                private_table += "<td>" + time_str + "</td>";
+                private_table += "<td>" + download_count_str + "</td>";
+                private_table += "<td><a href=\"" + download_link + "\" class=\"download-btn\">下载</a> ";
+                private_table += "<a href=\"" + delete_link + "\" class=\"delete-btn\" onclick=\"return confirm('确定删除？');\">删除</a></td>";
+                private_table += "</tr>";
+            }
+
+            std::string public_table;
+            for (int i = public_start; i < public_end; i++)
+            {
+                const auto &info = public_files[i];
+                std::string fname = FileUtil(info.real_path).FileName();
+                std::string size_str = std::to_string(info.fsize / 1024) + " KB";
+                std::string time_str = FormatTime(info.mtime);
+                std::string download_link = info.url_path;
+                std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
+                std::string download_count_str = std::to_string(info.download_count);
+
+                public_table += "<tr>";
+                public_table += "<td>" + EscapeHTML(fname) + "</td>";
+                public_table += "<td>" + EscapeHTML(info.uploader) + "</td>";
+                public_table += "<td>" + size_str + "</td>";
+                public_table += "<td>" + time_str + "</td>";
+                public_table += "<td>" + download_count_str + "</td>";
+                public_table += "<td><a href=\"" + download_link + "\" class=\"download-btn\">下载</a> ";
+                if (info.uploader == user || IsAdmin(user))
+                {
+                    public_table += "<a href=\"" + delete_link + "\" class=\"delete-btn\" onclick=\"return confirm('确定删除？');\">删除</a>";
+                }
+                public_table += "</td>";
+                public_table += "</tr>";
+            }
+
+            if (private_table.empty())
+                private_table = "<tr><td colspan=\"5\">暂无私有文件</td></tr>";
+            if (public_table.empty())
+                public_table = "<tr><td colspan=\"6\">暂无公共文件</td></tr>";
+
+            // 生成分页控件
+            PaginationInfo private_pagination;
+            private_pagination.current_page = page;
+            private_pagination.total_pages = private_total_pages > 0 ? private_total_pages : 1;
+            private_pagination.page_size = page_size;
+            private_pagination.total_items = private_total;
+            std::string private_pagination_html = GeneratePagination(private_pagination, "/main/private/");
+
+            PaginationInfo public_pagination;
+            public_pagination.current_page = page;
+            public_pagination.total_pages = public_total_pages > 0 ? public_total_pages : 1;
+            public_pagination.page_size = page_size;
+            public_pagination.total_items = public_total;
+            std::string public_pagination_html = GeneratePagination(public_pagination, "/main/private/");
+
+            std::unordered_map<std::string, std::string> placeholders;
+            placeholders["username"] = EscapeHTML(user);
+            placeholders["private_table"] = private_table;
+            placeholders["public_table"] = public_table;
+            placeholders["private_pagination"] = private_pagination_html;
+            placeholders["public_pagination"] = public_pagination_html;
+            placeholders["search_keyword"] = "";
+            placeholders["search_return_button"] = "";
+            placeholders["show_private"] = "true";
+            placeholders["show_public"] = "false";
+            
+            rsp.body = LoadTemplate("main.html", placeholders);
+            rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+        }
+
+        static void PublicPage(const httplib::Request &req, httplib::Response &rsp)
+        {
+            if (!IsLoggedIn(req))
+            {
+                rsp.status = 302;
+                rsp.set_header("Location", "/login");
+                return;
+            }
+            std::string user = GetUsername(req);
+
+            // 获取分页参数
+            int page = 1;
+            int page_size = 10;
+            if (req.has_param("page"))
+            {
+                try {
+                    page = std::stoi(req.get_param_value("page"));
+                    if (page < 1) page = 1;
+                } catch (...) {
+                    page = 1;
+                }
+            }
+
+            // 读取所有备份信息
+            std::vector<BackupInfo> all;
+            _data->GetAll(&all);
+
+            // 分离私有和公共文件，并按时间排序
+            std::vector<BackupInfo> private_files;
+            std::vector<BackupInfo> public_files;
+            
+            for (const auto &info : all)
+            {
+                if (info.partition == "private")
+                {
+                    if (info.uploader == user || IsAdmin(user))
+                    {
+                        private_files.push_back(info);
+                    }
+                }
+                else if (info.partition == "public")
+                {
+                    public_files.push_back(info);
+                }
+            }
+
+            // 按上传时间排序（最新的在前）
+            std::sort(private_files.begin(), private_files.end(), 
+                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
+            std::sort(public_files.begin(), public_files.end(), 
+                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
+
+            // 计算分页信息
+            int private_total = private_files.size();
+            int private_total_pages = (private_total + page_size - 1) / page_size;
+            int private_start = (page - 1) * page_size;
+            int private_end = std::min(private_start + page_size, private_total);
+
+            int public_total = public_files.size();
+            int public_total_pages = (public_total + page_size - 1) / page_size;
+            int public_start = (page - 1) * page_size;
+            int public_end = std::min(public_start + page_size, public_total);
+
+            // 构建文件列表 HTML（当前页）
+            std::string private_table;
+            for (int i = private_start; i < private_end; i++)
+            {
+                const auto &info = private_files[i];
+                std::string fname = FileUtil(info.real_path).FileName();
+                std::string size_str = std::to_string(info.fsize / 1024) + " KB";
+                std::string time_str = FormatTime(info.mtime);
+                std::string download_link = info.url_path;
+                std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
+                std::string download_count_str = std::to_string(info.download_count);
+
+                private_table += "<tr>";
+                private_table += "<td>" + EscapeHTML(fname) + "</td>";
+                private_table += "<td>" + size_str + "</td>";
+                private_table += "<td>" + time_str + "</td>";
+                private_table += "<td>" + download_count_str + "</td>";
+                private_table += "<td><a href=\"" + download_link + "\" class=\"download-btn\">下载</a> ";
+                private_table += "<a href=\"" + delete_link + "\" class=\"delete-btn\" onclick=\"return confirm('确定删除？');\">删除</a></td>";
+                private_table += "</tr>";
+            }
+
+            std::string public_table;
+            for (int i = public_start; i < public_end; i++)
+            {
+                const auto &info = public_files[i];
+                std::string fname = FileUtil(info.real_path).FileName();
+                std::string size_str = std::to_string(info.fsize / 1024) + " KB";
+                std::string time_str = FormatTime(info.mtime);
+                std::string download_link = info.url_path;
+                std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
+                std::string download_count_str = std::to_string(info.download_count);
+
+                public_table += "<tr>";
+                public_table += "<td>" + EscapeHTML(fname) + "</td>";
+                public_table += "<td>" + EscapeHTML(info.uploader) + "</td>";
+                public_table += "<td>" + size_str + "</td>";
+                public_table += "<td>" + time_str + "</td>";
+                public_table += "<td>" + download_count_str + "</td>";
+                public_table += "<td><a href=\"" + download_link + "\" class=\"download-btn\">下载</a> ";
+                if (info.uploader == user || IsAdmin(user))
+                {
+                    public_table += "<a href=\"" + delete_link + "\" class=\"delete-btn\" onclick=\"return confirm('确定删除？');\">删除</a>";
+                }
+                public_table += "</td>";
+                public_table += "</tr>";
+            }
+
+            if (private_table.empty())
+                private_table = "<tr><td colspan=\"5\">暂无私有文件</td></tr>";
+            if (public_table.empty())
+                public_table = "<tr><td colspan=\"6\">暂无公共文件</td></tr>";
+
+            // 生成分页控件
+            PaginationInfo private_pagination;
+            private_pagination.current_page = page;
+            private_pagination.total_pages = private_total_pages > 0 ? private_total_pages : 1;
+            private_pagination.page_size = page_size;
+            private_pagination.total_items = private_total;
+            std::string private_pagination_html = GeneratePagination(private_pagination, "/main/public/");
+
+            PaginationInfo public_pagination;
+            public_pagination.current_page = page;
+            public_pagination.total_pages = public_total_pages > 0 ? public_total_pages : 1;
+            public_pagination.page_size = page_size;
+            public_pagination.total_items = public_total;
+            std::string public_pagination_html = GeneratePagination(public_pagination, "/main/public/");
+
+            std::unordered_map<std::string, std::string> placeholders;
+            placeholders["username"] = EscapeHTML(user);
+            placeholders["private_table"] = private_table;
+            placeholders["public_table"] = public_table;
+            placeholders["private_pagination"] = private_pagination_html;
+            placeholders["public_pagination"] = public_pagination_html;
+            placeholders["search_keyword"] = "";
+            placeholders["search_return_button"] = "";
+            placeholders["show_private"] = "false";
+            placeholders["show_public"] = "true";
+            
+            rsp.body = LoadTemplate("main.html", placeholders);
+            rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+        }
+
+        static void Search(const httplib::Request &req, httplib::Response &rsp)
+        {
+            if (!IsLoggedIn(req))
+            {
+                rsp.status = 302;
+                rsp.set_header("Location", "/login");
+                return;
+            }
+            // 支持 keyword 和 query 两种参数名
+            std::string keyword = req.has_param("keyword") ? req.get_param_value("keyword") : 
+                              (req.has_param("query") ? req.get_param_value("query") : "");
+            
+            // 如果搜索关键词为空，重定向到主页面
+            if (keyword.empty())
+            {
+                rsp.status = 302;
+                rsp.set_header("Location", "/main/");
+                return;
+            }
+            
+            // 获取分页参数
+            int page = 1;
+            int page_size = 10;
+            if (req.has_param("page"))
+            {
+                try {
+                    page = std::stoi(req.get_param_value("page"));
+                    if (page < 1) page = 1;
+                } catch (...) {
+                    page = 1;
+                }
+            }
+            
+            std::string user = GetUsername(req);
+
+            std::vector<BackupInfo> all;
+            _data->GetAll(&all);
+
+            // 分离匹配的私有和公共文件
+            std::vector<BackupInfo> private_files;
+            std::vector<BackupInfo> public_files;
+            
+            for (const auto &info : all)
+            {
+                std::string fname = FileUtil(info.real_path).FileName();
+                // 文件名不匹配则跳过
+                if (fname.find(keyword) == std::string::npos)
+                    continue;
+                
+                if (info.partition == "private")
+                {
+                    // 权限过滤：只包含当前用户的私有文件或管理员可以看到所有
+                    if (info.uploader == user || IsAdmin(user))
+                    {
+                        private_files.push_back(info);
+                    }
+                }
+                else if (info.partition == "public")
+                {
+                    public_files.push_back(info);
+                }
+            }
+
+            // 按上传时间排序（最新的在前）
+            std::sort(private_files.begin(), private_files.end(), 
+                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
+            std::sort(public_files.begin(), public_files.end(), 
+                     [](const BackupInfo &a, const BackupInfo &b) { return a.mtime > b.mtime; });
+
+            // 计算分页信息
+            int private_total = private_files.size();
+            int private_total_pages = (private_total + page_size - 1) / page_size;
+            int private_start = (page - 1) * page_size;
+            int private_end = std::min(private_start + page_size, private_total);
+
+            int public_total = public_files.size();
+            int public_total_pages = (public_total + page_size - 1) / page_size;
+            int public_start = (page - 1) * page_size;
+            int public_end = std::min(public_start + page_size, public_total);
+
+            // 构建文件列表 HTML（当前页）
+            std::string private_table;
+            for (int i = private_start; i < private_end; i++)
+            {
+                const auto &info = private_files[i];
+                std::string fname = FileUtil(info.real_path).FileName();
+                std::string size_str = std::to_string(info.fsize / 1024) + " KB";
+                std::string time_str = FormatTime(info.mtime);
+                std::string download_link = info.url_path;
+                std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
+                std::string download_count_str = std::to_string(info.download_count);
+
+                private_table += "<tr>";
+                private_table += "<td>" + EscapeHTML(fname) + "</td>";
+                private_table += "<td>" + size_str + "</td>";
+                private_table += "<td>" + time_str + "</td>";
+                private_table += "<td>" + download_count_str + "</td>";
+                private_table += "<td><a href=\"" + download_link + "\" class=\"download-btn\">下载</a> ";
+                private_table += "<a href=\"" + delete_link + "\" class=\"delete-btn\" onclick=\"return confirm('确定删除？');\">删除</a></td>";
+                private_table += "</tr>";
+            }
+
+            std::string public_table;
+            for (int i = public_start; i < public_end; i++)
+            {
+                const auto &info = public_files[i];
+                std::string fname = FileUtil(info.real_path).FileName();
+                std::string size_str = std::to_string(info.fsize / 1024) + " KB";
+                std::string time_str = FormatTime(info.mtime);
+                std::string download_link = info.url_path;
+                std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
+                std::string download_count_str = std::to_string(info.download_count);
+
+                public_table += "<tr>";
+                public_table += "<td>" + EscapeHTML(fname) + "</td>";
+                public_table += "<td>" + EscapeHTML(info.uploader) + "</td>";
+                public_table += "<td>" + size_str + "</td>";
+                public_table += "<td>" + time_str + "</td>";
+                public_table += "<td>" + download_count_str + "</td>";
+                public_table += "<td><a href=\"" + download_link + "\" class=\"download-btn\">下载</a> ";
+                if (info.uploader == user || IsAdmin(user))
+                {
+                    public_table += "<a href=\"" + delete_link + "\" class=\"delete-btn\" onclick=\"return confirm('确定删除？');\">删除</a>";
+                }
+                public_table += "</td>";
+                public_table += "</tr>";
+            }
+
+            if (private_table.empty())
+                private_table = "<tr><td colspan=\"5\">无匹配的私有文件</td></tr>";
+            if (public_table.empty())
+                public_table = "<tr><td colspan=\"6\">无匹配的公共文件</td></tr>";
+
+            // 生成分页控件（搜索时保留关键词参数）
+            std::string search_params = "&keyword=" + httplib::detail::encode_url(keyword);
+            PaginationInfo private_pagination;
+            private_pagination.current_page = page;
+            private_pagination.total_pages = private_total_pages > 0 ? private_total_pages : 1;
+            private_pagination.page_size = page_size;
+            private_pagination.total_items = private_total;
+            std::string private_pagination_html = GeneratePagination(private_pagination, "/search", search_params);
+
+            PaginationInfo public_pagination;
+            public_pagination.current_page = page;
+            public_pagination.total_pages = public_total_pages > 0 ? public_total_pages : 1;
+            public_pagination.page_size = page_size;
+            public_pagination.total_items = public_total;
+            std::string public_pagination_html = GeneratePagination(public_pagination, "/search", search_params);
+
+            std::unordered_map<std::string, std::string> placeholders;
+            placeholders["username"] = EscapeHTML(user);
+            placeholders["private_table"] = private_table;
+            placeholders["public_table"] = public_table;
+            placeholders["private_pagination"] = private_pagination_html;
+            placeholders["public_pagination"] = public_pagination_html;
+            placeholders["search_keyword"] = EscapeHTML(keyword);
+            placeholders["search_return_button"] = "<button onclick=\"window.location.href='/main/'\">返回</button>";
+            placeholders["show_private"] = "false";
+            placeholders["show_public"] = "false";
+            
+            rsp.body = LoadTemplate("main.html", placeholders);
+            rsp.set_header("Content-Type", "text/html; charset=UTF-8");
         }
 
         static void DeleteFile(const httplib::Request &req, httplib::Response &rsp)
         {
-            // 1. 验证密码
-            std::string input_pwd = req.get_param_value("password");
-            const std::string correct_pwd = "111"; // 设定的密码
-            if (input_pwd != correct_pwd)
+            if (!IsLoggedIn(req))
             {
-                rsp.status = 403; // 密码错误返回403
-                rsp.body = "密码错误，无法删除文件";
-                rsp.set_header("Content-Type", "text/plain; charset=UTF-8");
+                rsp.status = 302;
+                rsp.set_header("Location", "/login");
                 return;
             }
-
-            // 2. 获取待删除文件的URL路径
-            std::string url_path = req.get_param_value("url");
-            if (url_path.empty())
+            std::string url = req.has_param("url") ? req.get_param_value("url") : "";
+            if (url.empty())
             {
-                rsp.status = 400; // 参数错误返回400
-                rsp.body = "缺少文件URL参数";
-                rsp.set_header("Content-Type", "text/plain; charset=UTF-8");
+                rsp.body = R"(<script>alert("无效URL！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 400;
                 return;
             }
-
-            // 3. 从数据管理中获取文件信息
             BackupInfo info;
-            if (!_data->GetOneByURL(url_path, &info))
+            if (!_data->GetOneByURL(url, &info))
             {
-                rsp.status = 404; // 文件不存在返回404
-                rsp.body = "文件不存在或已被删除";
-                rsp.set_header("Content-Type", "text/plain; charset=UTF-8");
+                rsp.body = R"(<script>alert("文件未找到！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 404;
+                return;
+            }
+            std::string user = GetUsername(req);
+            if (info.uploader != user && !IsAdmin(user))
+            {
+                rsp.body = R"(<script>alert("无权限删除！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 403;
+                return;
+            }
+            // 根据 pack_flag 判断文件位置
+            // 如果 pack_flag = true，文件在 packdir 中（压缩文件）
+            // 如果 pack_flag = false，文件在 backdir 中（源文件）
+            bool delete_success = true;
+            
+            if (info.pack_flag)
+            {
+                // 文件被压缩，删除 packdir 中的压缩文件
+                FileUtil fu_pack(info.pack_path);
+                if (fu_pack.Exists())
+                {
+                    if (!fu_pack.Remove())
+                    {
+                        std::cerr << "Failed to remove pack_path: " << info.pack_path << ", errno: " << strerror(errno) << std::endl;
+                        delete_success = false;
+                    }
+                }
+                else
+                {
+                    std::cerr << "Compressed file not found: " << info.pack_path << std::endl;
+                    delete_success = false;
+                }
+            }
+            else
+            {
+                // 文件未压缩，删除 backdir 中的源文件
+                FileUtil fu_real(info.real_path);
+                if (fu_real.Exists())
+                {
+                    if (!fu_real.Remove())
+            {
+                std::cerr << "Failed to remove real_path: " << info.real_path << ", errno: " << strerror(errno) << std::endl;
+                delete_success = false;
+            }
+                }
+                else
+            {
+                    std::cerr << "Source file not found: " << info.real_path << std::endl;
+                delete_success = false;
+                }
+            }
+            
+            if (!delete_success)
+            {
+                rsp.body = R"(<script>alert("文件在磁盘上未找到或删除失败！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 404;
                 return;
             }
 
-            // 4. 删除服务器上的实际文件（原文件和压缩文件）
-            FileUtil real_file(info.real_path);
-            if (real_file.Exists())
+            if (delete_success && _data->Delete(info))
             {
-                real_file.Remove(); // 删除原文件
+                rsp.status = 302;
+                // 删除后重定向到主页面，显示所有文件
+                rsp.set_header("Location", "/main/?msg=delete_success");
             }
-            FileUtil pack_file(info.pack_path);
-            if (pack_file.Exists())
+            else
             {
-                pack_file.Remove(); // 删除压缩文件（如果存在）
+                rsp.body = R"(<script>alert("删除失败！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 500;
             }
-
-            // 5. 调用DataManager的Delete方法删除数据记录
-            if (!_data->Delete(info))
-            {
-                rsp.status = 500; // 服务器错误返回500
-                rsp.body = "删除文件记录失败";
-                rsp.set_header("Content-Type", "text/plain; charset=UTF-8");
-                return;
-            }
-
-            // 6. 删除成功，重定向到文件列表页
-            rsp.status = 302;
-            rsp.set_header("Location", "/");
-            rsp.set_header("Cache-Control", "no-cache, no-store, must-revalidate"); // 禁止缓存
-            rsp.set_header("Pragma", "no-cache");
-            rsp.set_header("Expires", "0");
         }
 
-        // //DEBUG
-        // static void No(const httplib::Request& req, httplib::Response& rsp)
-        // {
-        //     rsp.body.clear();
-        //     rsp.body = R"(<!DOCTYPE html><html lang="zh"><head>)";
-        //     rsp.body += R"(<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">)";
-        //     rsp.body += R"(<title>中央红色字体</title><style>)";
-        //     rsp.body += R"(body {height: 100vh;margin: 0;display: flex;justify-content: center;align-items: center;background-color:#f0f0f0;})";
-        //     rsp.body += R"(.content {font-size: 48px;color: red;})";
-        //     rsp.body += R"(</style></head><body><div class="content">)";
-        //     rsp.body += "客户端请求的语法错误，服务器无法理解 400!!!";
-        //     rsp.body += R"(</div></body></html>)";
-        //     rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-        //     rsp.status = 400;
-        // }
-
-        // 因为下面的调用函数是静态的
         static std::string GetETag(const BackupInfo &info)
         {
-            // etag : filename-fsize-mtime
             FileUtil fu(info.real_path);
             std::string etag = fu.FileName();
-            etag += "-";
-            etag += std::to_string(info.fsize);
-            etag += "-";
-            etag += std::to_string(info.mtime);
+            etag += "-" + std::to_string(info.fsize) + "-" + std::to_string(info.mtime);
             return etag;
         }
+
         static void Download(const httplib::Request &req, httplib::Response &rsp)
         {
-            // 1. 获取客户端请求的资源路径path    req.path
-            // 2. 根据资源路径，获取文件备份信息
             BackupInfo info;
-            _data->GetOneByURL(req.path, &info);
-            // 3. 判断文件是否被压缩，如果被压缩，要先解压缩
-            if (info.pack_flag == true)
+            if (!_data->GetOneByURL(req.path, &info))
             {
-                FileUtil fu(info.pack_path);
-                fu.UnCompress(info.real_path); // 将文件解压到备份目录下
-                // 4. 删除压缩包，修改备份信息（已经没有被压缩）
-                fu.Remove();
+                rsp.status = 404;
+                rsp.body = "File not found";
+                return;
+            }
+            
+            // 如果文件被压缩，需要从 packdir 解压到 backdir
+            if (info.pack_flag)
+            {
+                // 压缩文件在 packdir 中
+                FileUtil fu_pack(info.pack_path);
+                if (!fu_pack.Exists())
+                {
+                    rsp.status = 404;
+                    rsp.body = "Compressed file not found";
+                    return;
+                }
+                
+                // 确保 backdir 中的目标目录存在
+                std::string real_dir = info.real_path.substr(0, info.real_path.find_last_of('/'));
+                FileUtil(real_dir).CreateDirectory();
+
+                // 解压文件到 backdir
+                if (!fu_pack.UnCompress(info.real_path))
+                {
+                    rsp.status = 500;
+                    rsp.body = "Failed to decompress file";
+                    return;
+                }
+                
+                // 解压成功后，删除压缩文件（下次长时间未访问会再次压缩）
+                if (!fu_pack.Remove())
+                {
+                    std::cerr << "Failed to remove compressed file: " << info.pack_path << std::endl;
+                }
+                
+                // 更新文件信息
+                FileUtil fu_real(info.real_path);
                 info.pack_flag = false;
+                info.fsize = fu_real.FileSize();
+                info.mtime = fu_real.LastMTime();
+                info.atime = time(nullptr); // 更新访问时间为当前时间
                 _data->Update(info);
             }
-            // 5. 读取文件数据，放入rsp.body中
+            
+            // 从 backdir 读取文件（此时文件一定在 backdir 中）
             FileUtil fu(info.real_path);
+            if (!fu.Exists())
+            {
+                rsp.status = 404;
+                rsp.body = "File not found in backdir";
+                return;
+            }
 
-            // 如果没有If-Range字段则是正常下载，或者如果有这个字段，
-            // 但是他的值与当前文件的etag不一致，则也必须中心返回全部数据
-            bool retrans = false; // 标记当前是否是断点续传
+            // 更新文件的访问时间
+            time_t now = time(nullptr);
+            #ifdef _WIN32
+                // Windows 上更新访问时间
+                struct _utimbuf ut;
+                ut.actime = now;
+                ut.modtime = fu.LastMTime();
+                _utime(info.real_path.c_str(), &ut);
+            #else
+                // Linux 上更新访问时间
+                struct utimbuf ut;
+                ut.actime = now;
+                ut.modtime = fu.LastMTime();
+                utime(info.real_path.c_str(), &ut);
+            #endif
+            
+            // 更新 BackupInfo 中的访问时间
+            info.atime = now;
+
+            bool retrans = false;
             std::string old_etag;
             if (req.has_header("If-Range"))
-                ;
             {
                 old_etag = req.get_header_value("If-Range");
-                // 有If-range字段，且这个字段的值与请求文件的最新etag一致则符合断点续传
                 if (old_etag == GetETag(info))
                 {
                     retrans = true;
                 }
             }
 
-            if (retrans == false)
-            {
-                fu.GetContent(&rsp.body);
-                // 6. 设置响应头部字段：ETag ， Accept-Ranges: bytes
-                rsp.set_header("Accept-Ranges:", "bytes");
-                rsp.set_header("ETag", GetETag(info));
-                rsp.set_header("Content-Type", "application/octet-stream");
-                rsp.status = 200;
-            }
-            else
-            {
-                // httplib内部实现了对于区间请求也就是断点续传请求的处理
-                // 只需要我们用户将文件所有数据读取到rsp.body中，他们内部会自动根据请求区间，从body中取出指定区间数据进行响应
-                // std::string range = req.get_header_val("Range"); 解析bytes=start-end
-                fu.GetContent(&rsp.body);
-                rsp.set_header("Accept-Ranges:", "bytes");
-                rsp.set_header("ETag", GetETag(info));
-                rsp.set_header("Content-Type", "application/octet-stream");
-                // rsp.set_header("Content-Range","bytes start-end/fsize");
-                rsp.status = 206;
-            }
+            fu.GetContent(&rsp.body);
+            rsp.set_header("Accept-Ranges", "bytes");
+            rsp.set_header("ETag", GetETag(info));
+            rsp.set_header("Content-Type", "application/octet-stream");
+            rsp.status = retrans ? 206 : 200;
+            
+            // 更新下载计数和访问时间
+            info.download_count++;
+            _data->Update(info);
         }
 
     public:
         Service()
         {
-            // 前三个变量初始化数据可以从配置文件里获取，_server创建时就自动初始化了
             Config *conf = Config::GetInstance();
             _server_port = conf->GetServerPort();
             _server_ip = conf->GetServerIp();
             _download_prefix = conf->GetDownloadPrefix();
+
+            std::string back_public = conf->GetBackDir() + "public/";
+            std::string pack_public = conf->GetPackDir() + "public/";
+            FileUtil(back_public).CreateDirectory();
+            FileUtil(pack_public).CreateDirectory();
         }
         bool RunModule()
         {
+            _server.Get("/login", Service::Login);
+            _server.Post("/login", Service::Login);
+            _server.Get("/register", Service::Register);
+            _server.Post("/register", Service::Register);
+            _server.Get("/user_info", Service::UserInfo);
+            _server.Post("/user_info", Service::UserInfo);
+            _server.Post("/upload", Service::Upload);
+            _server.Get("/main/", Service::MainPage);
+            _server.Get("/main/private/", Service::PrivatePage);
+            _server.Get("/main/public/", Service::PublicPage);
+            _server.Get("/search", Service::Search);
+            _server.Get("/delete", Service::DeleteFile);
+            _server.Get("/", [](const httplib::Request &req, httplib::Response &rsp)
+                        {
+            rsp.status = 302;
+            rsp.set_header("Location", "/main/"); });
+            _server.Get("/logout", Service::Logout);
 
-            // 创建映射关系
-            // DEBUG printf("-----------RunModule-------------\n");
-            _server.Post("/upload", Upload);
-            // DEBUG printf("-----------Post upload-------------\n");
-            _server.Get("/listshow/", ListShow);
-            _server.Get("/delete", DeleteFile);
-            _server.Get("/", ListShow);
+            _server.Get("/main", [](const httplib::Request &req, httplib::Response &rsp)
+                        {
+            rsp.status = 302;
+            rsp.set_header("Location", "/main/"); });
 
-            ////DEBUG
-            ////设置自定义日志记录器
-            // _server.set_logger([](const httplib::Request& req, const httplib::Response& res) {
-            //     // 打印请求日志
-            //     std::cout << "Request:" << std::endl;
-            //     std::cout << "  Method: " << req.method << std::endl;
-            //     std::cout << "  Path:   " << req.path << std::endl;
-            //     std::cout << "  Version: " << req.version << std::endl;
-
-            //     // 打印响应日志
-            //     std::cout << "Response:" << std::endl;
-            //     std::cout << "  Status: " << res.status << std::endl;
-            //     std::cout << "  Version: " << res.version << std::endl;
-            // };
-
-            std::string download_url = _download_prefix + "(.*)"; // 避免下载前缀路径变化
-            _server.Get(download_url, Download);                  // 匹配任意字符任意次
-
-            // 其他没有协商的请求
-            //_server.Get("/(.*)", No);
+            std::string download_url = _download_prefix + "(.*)";
+            _server.Get(download_url, Service::Download);
 
             _server.listen(_server_ip.c_str(), _server_port);
-
-            // //Debug
-            // printf("Server starting on %s:%d...\n", _server_ip.c_str(), _server_port);
-            // if (_server.listen(_server_ip.c_str(), _server_port)) {
-            //     printf("Server started successfully!\n");
-            //     //do Something
-            // } else {
-            //     printf("Failed to start server!\n");
-            // }
-            // DEBUG printf("------------RunModule运行结束------------\n");
 
             return true;
         }
     };
+
+    const std::string Service::page_template = R"(
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>PAGE_TITLE_PLACEHOLDER</title>
+    <style>
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: linear-gradient(to bottom, #f4f4f9, #e0e0e0); 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            height: 100vh; 
+            margin: 0; 
+        }
+        .container { 
+            background: white; 
+            padding: 30px; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15); 
+            width: 600px; 
+            text-align: center; 
+            transition: transform 0.3s ease; 
+        }
+        .container:hover { transform: translateY(-5px); }
+        h2 { 
+            color: #0056b3; 
+            font-size: 1.8em; 
+            margin-bottom: 15px; 
+        }
+        input[type="file"], input[type="submit"] { 
+            width: 100%; 
+            padding: 12px; 
+            margin: 12px 0; 
+            border: 1px solid #ccc; 
+            border-radius: 6px; 
+            box-sizing: border-box; 
+            transition: border-color 0.3s ease; 
+        }
+        input[type="file"]:focus { border-color: #007bff; }
+        input[type="submit"] { 
+            background: linear-gradient(to right, #007bff, #0056b3); 
+            color: white; 
+            border: none; 
+            cursor: pointer; 
+            font-size: 16px; 
+            transition: background 0.3s ease; 
+        }
+        input[type="submit"]:hover { background: linear-gradient(to right, #0056b3, #003d80); }
+        table { 
+            width: 100%; 
+            border-collapse: collapse; 
+            margin-top: 20px; 
+        }
+        th, td { 
+            border: 1px solid #ddd; 
+            padding: 8px; 
+            text-align: left; 
+        }
+        th { background-color: #f2f2f2; }
+        a { color: #007bff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>欢迎，USERNAME_PLACEHOLDER！</h2>
+        <a href="/main/private/">私有区</a> | <a href="/main/public/">公共区</a> | <a href="/user_info">用户信息</a> | <a href="/logout">登出</a>
+        
+        <h2>搜索文件</h2>
+        <form action="/search" method="get">
+            <input type="text" name="query" placeholder="输入文件名或关键字">
+            <input type="submit" value="搜索">
+        </form>
+
+        <h2>上传文件</h2>
+        <form id="uploadForm" action="/upload" method="post" enctype="multipart/form-data">
+            <input type="file" name="file"><br>
+            <input type="radio" name="partition" value="private" checked> 私有区
+            <input type="radio" name="partition" value="public"> 公共区<br>
+            <input type="submit" value="上传">
+        </form>
+
+        <h2>FILE_LIST_TITLE_PLACEHOLDER</h2>
+        <table>
+            <tr>
+                <th>文件名</th>
+                <th>大小</th>
+                <th>上传时间</th>
+                <th>操作</th>
+            </tr>
+            FILE_LIST_PLACEHOLDER
+        </table>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const form = e.target;
+            const formData = new FormData(form);
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            }).then(response => {
+                if (response.ok) {
+                    alert('上传成功！');
+                    window.location.reload();
+                } else {
+                    response.text().then(text => alert('上传失败：' + text));
+                }
+            }).catch(error => {
+                alert('上传错误：' + error);
+            });
+        });
+    </script>
+</body>
+</html>
+)";
 }

@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="zh">
+
+<head>
+    <meta charset="UTF-8">
+    <title>云备份系统</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(to bottom, #f4f4f9, #d9d9d9);
+            margin: 10px;  /* 修改：减少 body margin 以缩小整体留白 */
+            color: #333;
+            line-height: 1.5;  /* 修改：略减 line-height 使文本更紧凑 */
+        }
+
+        h1 {
+            color: #007bff;
+            text-align: center;
+            margin-bottom: 20px;  /* 修改：减少 margin-bottom */
+            font-size: 2.5em;  /* 修改：略减字体大小，使块更适中 */
+            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.15);
+        }
+
+        h2 {
+            color: #0056b3;
+            font-size: 1.8em;  /* 修改：略减字体大小 */
+            margin-bottom: 15px;  /* 修改：减少 margin-bottom */
+            border-bottom: 2px solid #007bff;  /* 修改：减薄 border */
+            padding-bottom: 8px;  /* 修改：减少 padding-bottom */
+        }
+
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0;
+            margin-top: 15px;  /* 修改：减少 margin-top */
+            margin-bottom: 25px;  /* 修改：减少 margin-bottom */
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);  /* 修改：减弱阴影，使块更轻盈 */
+            border-radius: 8px;  /* 修改：略减圆角 */
+            overflow: hidden;
+        }
+
+        th,
+        td {
+            border: 1px solid #ddd;
+            padding: 10px;  /* 修改：减少 padding，使表格更紧凑 */
+            text-align: left;
+        }
+
+        th {
+            background: linear-gradient(to bottom, #007bff, #0056b3);
+            color: white;
+            font-weight: bold;
+        }
+
+        tr:nth-child(even) {
+            background-color: #f8f8f8;
+        }
+
+        tr:hover {
+            background-color: #e6e6e6;
+            transition: background-color 0.3s ease;
+        }
+
+        .delete-btn {
+            color: #ff4d4d;
+            text-decoration: none;
+            font-weight: bold;
+            padding: 6px 10px;  /* 修改：减少 padding，使按钮更小适中 */
+            border: 1px solid #ff4d4d;
+            border-radius: 4px;
+            transition: background 0.3s ease;
+        }
+
+        .delete-btn:hover {
+            background: #ff4d4d;
+            color: white;
+        }
+
+        .download-btn {
+            color: #28a745;
+            text-decoration: none;
+            font-weight: bold;
+            padding: 6px 10px;  /* 修改：减少 padding，使按钮更小适中 */
+            border: 1px solid #28a745;
+            border-radius: 4px;
+            margin-right: 8px;  /* 修改：减少 margin-right */
+            transition: background 0.3s ease;
+        }
+
+        .download-btn:hover {
+            background: #28a745;
+            color: white;
+        }
+
+        .dropdown {
+            position: absolute;
+            top: 10px;
+            right: 20px;
+            display: inline-block;
+        }
+
+        .dropbtn {
+            background: linear-gradient(to right, #007bff, #0056b3);
+            color: white;
+            padding: 10px 15px;  /* 修改：减少 padding，使按钮更紧凑 */
+            font-size: 15px;  /* 修改：略减字体大小 */
+            border: none;
+            cursor: pointer;
+            border-radius: 5px;  /* 修改：略减圆角 */
+            transition: background 0.3s ease;
+        }
+
+        .dropdown-content {
+            display: none;
+            position: absolute;
+            background-color: #f9f9f9;
+            min-width: 160px;  /* 修改：略减宽度，使块更适中 */
+            box-shadow: 0px 6px 12px rgba(0, 0, 0, 0.2);  /* 修改：减弱阴影 */
+            z-index: 1;
+            right: 0;
+            border-radius: 5px;
+        }
+
+        .dropdown-content a {
+            color: black;
+            padding: 10px 14px;  /* 修改：减少 padding，使选项更紧凑 */
+            text-decoration: none;
+            display: block;
+            transition: background-color 0.3s ease;
+        }
+
+        .dropdown-content a:hover {
+            background-color: #f1f1f1;
+        }
+
+        .dropdown:hover .dropdown-content {
+            display: block;
+        }
+
+        .dropdown:hover .dropbtn {
+            background: linear-gradient(to right, #0056b3, #003d80);
+        }
+
+        form {
+            background: white;
+            padding: 20px;  /* 修改：减少 padding，使表单块更紧凑 */
+            border-radius: 8px;  /* 修改：略减圆角 */
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);  /* 修改：减弱阴影 */
+            margin-bottom: 25px;  /* 修改：减少 margin-bottom */
+            max-width: 550px;  /* 修改：减少 max-width，使块更适中 */
+            margin: 0 auto;
+        }
+
+        input[type="file"],
+        select,
+        input[type="text"] {
+            margin: 8px 0;  /* 修改：减少 margin，使输入框间留白小 */
+            width: 100%;
+            padding: 8px;  /* 修改：减少 padding，使输入框更紧凑 */
+            border: 1px solid #ccc;
+            border-radius: 5px;  /* 修改：略减圆角 */
+            box-sizing: border-box;
+            transition: border-color 0.3s ease;
+        }
+
+        input[type="file"]:focus,
+        select:focus,
+        input[type="text"]:focus { border-color: #007bff; }
+
+        input[type="submit"] {
+            padding: 10px;  /* 修改：减少 padding，使按钮更小适中 */
+            background: linear-gradient(to right, #28a745, #218838);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;  /* 修改：略减字体大小 */
+            width: 100%;
+            transition: background 0.3s ease;
+        }
+
+        input[type="submit"]:hover {
+            background: linear-gradient(to right, #218838, #1e7e34);
+        }
+
+        .section {
+            display: none;
+            background: white;
+            padding: 15px;  /* 修改：减少 padding，使 section 块更紧凑 */
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15);
+            margin-bottom: 20px;  /* 修改：减少 margin-bottom */
+        }
+
+        #private-section {
+            display: block;
+        }
+
+        button {
+            padding: 10px 18px;  /* 修改：减少 padding，使按钮更紧凑 */
+            background: linear-gradient(to right, #007bff, #0056b3);
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin-bottom: 15px;  /* 修改：减少 margin-bottom */
+            font-size: 15px;  /* 修改：略减字体大小 */
+            transition: background 0.3s ease;
+            margin-right: 8px;  /* 修改：减少 margin-right */
+        }
+
+        button:hover {
+            background: linear-gradient(to right, #0056b3, #003d80);
+        }
+
+        .header {  /* 修改：减少 padding 和 margin，使 header 更紧凑 */
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            max-width: 1100px;  /* 修改：略减 max-width */
+            margin: 0 auto 15px;  /* 修改：减少 margin-bottom */
+            padding: 8px;  /* 修改：减少 padding */
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 3px 8px rgba(0, 0, 0, 0.1);  /* 修改：减弱阴影 */
+        }
+
+        .buttons-left {  /* 修改：减少 gap，使按钮组更紧凑 */
+            display: flex;
+            gap: 8px;
+        }
+
+        .search-form {  /* 修改：减少 gap 和 padding，使搜索表单更紧凑 */
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            max-width: 450px;  /* 修改：增加 max-width，使搜索区更长 */
+        }
+
+        .search-form input[type="text"] {  /* 修改：无额外 margin */
+            flex: 1;
+            margin: 0;
+        }
+
+        .search-form input[type="submit"] {  /* 修改：减小按钮 */
+            padding: 6px 10px;
+            font-size: 14px;
+            width: auto;
+            min-width: 70px;
+        }
+
+        @media (max-width: 768px) {  /* 修改：响应式调整，减少 gap */
+            .header {
+                flex-direction: column;
+                gap: 10px;  /* 修改：减少 gap */
+            }
+            .buttons-left, .search-form {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
+        #progress {
+            width: 0%;
+            height: 20px;  /* 修改：略减高度，使进度条更紧凑 */
+            background: linear-gradient(to right, #28a745, #218838);
+            text-align: center;
+            line-height: 20px;
+            color: white;
+            border-radius: 5px;
+            margin-top: 10px;  /* 修改：减少 margin-top */
+            transition: width 0.3s ease;
+            position: relative;
+            font-size: 12px;  /* 修改：减小字体，避免偏移 */
+        }
+
+        #progress::after {
+            content: attr(data-progress) '%';
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            margin: 20px 0;
+            flex-wrap: wrap;
+        }
+
+        .page-btn {
+            padding: 8px 12px;
+            background: white;
+            color: #007bff;
+            border: 1px solid #007bff;
+            border-radius: 4px;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-size: 14px;
+        }
+
+        .page-btn:hover:not(.disabled):not(.current) {
+            background: #007bff;
+            color: white;
+        }
+
+        .page-btn.current {
+            background: #007bff;
+            color: white;
+            font-weight: bold;
+            cursor: default;
+        }
+
+        .page-btn.disabled {
+            color: #ccc;
+            border-color: #ccc;
+            cursor: not-allowed;
+        }
+
+        .page-ellipsis {
+            padding: 8px 4px;
+            color: #666;
+        }
+
+        .page-info {
+            margin-left: 15px;
+            color: #666;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>云备份系统</h1>
+
+    <div class="dropdown">
+        <button class="dropbtn">{username} ▼</button>
+        <div class="dropdown-content">
+            <a href="/user_info">用户信息</a>
+            <a href="/logout">退出登录</a>
+        </div>
+    </div>
+
+    <!-- 上传表单 -->
+    <form id="upload-form" action="/upload" method="post" enctype="multipart/form-data" onsubmit="return validateUpload()">
+        <h2>上传文件</h2>
+        <input type="file" id="file" name="file" required>
+        <select id="partition" name="partition">
+            <option value="private">私有区</option>
+            <option value="public">公共区</option>
+        </select>
+        <input type="submit" value="上传">
+        <div id="progress" data-progress="0" style="width: 0%; display: none;"></div>
+    </form>
+
+    <div class="header">
+        <div class="buttons-left">
+            <button onclick="showPrivate()">私有区</button>
+            <button onclick="showPublic()">公共区</button>
+            <button onclick="showAll()">全部</button>
+            {search_return_button}
+        </div>
+        <div style="flex-grow: 1;"></div>  <!-- 新增：spacer div，推动搜索区更靠右 -->
+        <form class="search-form" action="/search" method="get" id="search-form">
+            <input type="hidden" id="search-partition" name="partition" value="private">
+            <input type="text" name="keyword" id="search-keyword" placeholder="搜索文件名..." value="{search_keyword}">
+            <input type="submit" value="搜索">
+        </form>
+    </div>
+
+    <!-- 私有文件区 -->
+    <div id="private-section" class="section">
+        <h2>私有文件区</h2>
+        <table>
+            <tr>
+                <th>文件名</th>
+                <th>文件大小</th>
+                <th>上传时间</th>
+                <th>下载次数</th>
+                <th>操作</th>
+            </tr>
+            {private_table}
+        </table>
+        {private_pagination}
+    </div>
+
+    <!-- 公共文件区 -->
+    <div id="public-section" class="section">
+        <h2>公共文件区</h2>
+        <table>
+            <tr>
+                <th>文件名</th>
+                <th>上传者</th>
+                <th>文件大小</th>
+                <th>上传时间</th>
+                <th>下载次数</th>
+                <th>操作</th>
+            </tr>
+            {public_table}
+        </table>
+        {public_pagination}
+    </div>
+
+    <script>
+    function validateUpload() {
+        var fileInput = document.getElementById('file');
+        var file = fileInput.files[0];
+        if (!file) {
+            alert("未选择文件");
+            return false;
+        }
+        if (file.size > 100 * 1024 * 1024) {
+            alert("文件过大，最大允许 100MB");
+            return false;
+        }
+        
+        // 显示进度条
+        var progress = document.getElementById('progress');
+        progress.style.display = 'block';
+        progress.style.width = '0%';
+        progress.setAttribute('data-progress', 0);
+        
+        // 使用简单的表单提交，显示上传进度
+        var form = document.getElementById('upload-form');
+        var formData = new FormData(form);
+        
+        var xhr = new XMLHttpRequest();
+        xhr.open('POST', '/upload', true);
+        
+        // 上传进度
+        xhr.upload.onprogress = function(e) {
+            if (e.lengthComputable) {
+                var percentComplete = Math.round((e.loaded / e.total) * 100);
+                progress.style.width = percentComplete + '%';
+                progress.setAttribute('data-progress', percentComplete);
+            }
+        };
+        
+        xhr.onload = function() {
+            // XMLHttpRequest 会自动跟随 302 重定向
+            if (xhr.status >= 200 && xhr.status < 300) {
+                // 上传成功，刷新页面显示新文件
+                setTimeout(function() {
+                    location.reload();
+                }, 300);
+            } else {
+                // 显示错误信息
+                var responseText = xhr.responseText;
+                if (responseText) {
+                    // 如果响应是 HTML（包含 alert），直接执行
+                    var tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = responseText;
+                    document.body.appendChild(tempDiv);
+                    var scripts = tempDiv.getElementsByTagName('script');
+                    for (var i = 0; i < scripts.length; i++) {
+                        try {
+                            eval(scripts[i].innerHTML);
+                        } catch(e) {
+                            console.error('Script execution error:', e);
+                        }
+                    }
+                    document.body.removeChild(tempDiv);
+                } else {
+                    alert('上传失败，状态码: ' + xhr.status);
+                }
+                progress.style.display = 'none';
+            }
+        };
+        
+        xhr.onerror = function() {
+            alert('上传过程中发生错误');
+            progress.style.display = 'none';
+        };
+        
+        xhr.send(formData);
+        return false;  // 阻止默认表单提交
+    }
+
+    // 新增：确认删除函数
+    function confirmDelete(url) {
+        if (confirm("确认删除此文件吗？此操作不可恢复！")) {
+            window.location.href = "/delete?url=" + encodeURIComponent(url);
+        }
+    }
+
+    // 新增：分区切换函数
+    function showPrivate() {
+        document.getElementById('private-section').style.display = 'block';
+        document.getElementById('public-section').style.display = 'none';
+        document.getElementById('search-partition').value = 'private';
+    }
+
+    function showPublic() {
+        document.getElementById('private-section').style.display = 'none';
+        document.getElementById('public-section').style.display = 'block';
+        document.getElementById('search-partition').value = 'public';
+    }
+
+    function showAll() {
+        document.getElementById('private-section').style.display = 'block';
+        document.getElementById('public-section').style.display = 'block';
+    }
+
+    // 初始化：根据页面状态设置显示
+    window.onload = function() {
+        // 检查是否有搜索关键词
+        var searchKeyword = document.getElementById('search-keyword');
+        if (searchKeyword && searchKeyword.value) {
+            // 有搜索关键词，显示所有匹配结果
+            showAll();
+        } else {
+            // 根据 show_private 或 show_public 占位符决定默认显示
+            // 这些值会在服务端被替换为 "true" 或 "false" 字符串
+            var showPrivateFlag = '{show_private}';
+            var showPublicFlag = '{show_public}';
+            if (showPublicFlag === 'true') {
+                showPublic();
+            } else if (showPrivateFlag === 'true') {
+                showPrivate();
+            } else {
+                // 默认显示私有区
+                showPrivate();
+            }
+        }
+    };
+    </script>
+</body>
+
+</html>

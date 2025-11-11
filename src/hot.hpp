@@ -2,11 +2,14 @@
 #include "config.hpp"
 #include "data.hpp"
 #include <unistd.h>
+#include <experimental/filesystem>
 
 extern cloud::DataManager *_data;
 
 namespace cloud
 {
+    namespace fs = std::experimental::filesystem;
+
     class HotManager
     {
     private:
@@ -33,76 +36,121 @@ namespace cloud
         // 初始化
         HotManager()
         {
-            // 成员变量都可以在config配置文件内获取
             Config *conf = Config::GetInstance();
             _back_dir = conf->GetBackDir();
             _pack_dir = conf->GetPackDir();
             _pack_suffix = conf->GetPackFileSuffix();
             _hot_time = conf->GetHotTime();
-            // 如果不存在路径，我们需要创建它
             FileUtil dir1(_back_dir);
             FileUtil dir2(_pack_dir);
             dir1.CreateDirectory();
             dir2.CreateDirectory();
+
+            std::string private_prefix = conf->GetPrivateDirPrefix();
+
+            // 创建公共目录
+            FileUtil public_back(_back_dir + "public/");
+            FileUtil public_pack(_pack_dir + "public/");
+            public_back.CreateDirectory();
+            public_pack.CreateDirectory();
+
+            // 创建私有基目录（用户子目录在上传时动态创建）
+            FileUtil private_back_base(_back_dir + private_prefix);
+            FileUtil private_pack_base(_pack_dir + private_prefix);
+            private_back_base.CreateDirectory();
+            private_pack_base.CreateDirectory();
         }
         // 热点管理
         bool RunModule()
         {
             while (1)
             {
-                // 1.获取路径下所有的文件
                 std::vector<std::string> arry;
-                FileUtil fu(_back_dir);
-                // 检查备份目录是否存在，如果不存在则创建
-                if (!fu.Exists())
+                // 扫描公共备份目录
+                FileUtil fu_public_back(_back_dir + "public/");
+                if (fu_public_back.Exists())
                 {
-                    fu.CreateDirectory();
-                    usleep(1000);
-                    continue;
+                    fu_public_back.ScanDirectory(&arry);
+                    ProcessFiles(arry, "public/");
+                }
+                arry.clear();
+
+                // 动态扫描所有私有备份目录（扫描 _back_dir + private_prefix 下的子目录）
+                std::string private_prefix = Config::GetInstance()->GetPrivateDirPrefix();
+                std::string private_base = _back_dir + private_prefix;
+                std::vector<std::string> user_dirs;
+                for (auto &p : fs::directory_iterator(private_base))
+                {
+                    if (fs::is_directory(p))
+                    {
+                        std::string user_dir = fs::path(p).filename().string() + "/";
+                        user_dirs.push_back(user_dir);
+                    }
+                }
+                for (const auto &user_dir : user_dirs)
+                {
+                    FileUtil fu_private_back(private_base + user_dir);
+                    if (fu_private_back.Exists())
+                    {
+                        fu_private_back.ScanDirectory(&arry);
+                        ProcessFiles(arry, private_prefix + user_dir);
+                    }
+                    arry.clear();
                 }
 
-                fu.ScanDirectory(&arry);
-                // 2.判断是否是热点文件
-                for (auto &a : arry)
-                {
-                    // 跳过无效文件名
-                    if (a.empty() || a == "." || a == "..")
-                    {
-                        continue;
-                    }
-
-                    // 检查文件是否存在且有效
-                    FileUtil file_check(a);
-                    if (!file_check.Exists() || file_check.FileSize() < 0)
-                    {
-                        continue;
-                    }
-                    
-                    if (HotJudge(a) == false)
-                    {
-                        // 非热点文件
-                        continue;
-                    }
-                    // 说明是热点文件
-                    // 3.获取备份文件信息
-                    BackupInfo info;
-                    if (_data->GetOneByRealPath(a, &info) == false)
-                    {
-                        // 如果获取不到，说明没有被创建，那么我们就直接创建一下
-                        info.NewBackupInfo(a);
-                    }
-                    // 4.压缩非热点的备份文件
-                    FileUtil tmp(a);
-                    tmp.Compress(info.pack_path); //???
-                    // 5.压缩结束之后，删除源文件
-                    tmp.Remove();
-                    // 6.修改备份文件
-                    info.pack_flag = true;
-                    _data->Update(info);
-                }
-                usleep(1000);
+                usleep(1000 * 1000); // 每秒扫描
             }
             return true;
+        }
+
+    private:
+        void ProcessFiles(std::vector<std::string> &arry, const std::string &subdir)
+        {
+            for (auto &a : arry)
+            {
+                if (a.empty() || a == "." || a == "..")
+                    continue;
+                std::string full_path = _back_dir + subdir + a;
+                FileUtil fu_full(full_path);
+                if (!fu_full.Exists())
+                    continue;
+
+                // 检查文件是否应该被压缩
+                BackupInfo info;
+                if (!_data->GetOneByRealPath(full_path, &info))
+                    continue;
+                
+                // 如果文件已经被压缩，跳过
+                if (info.pack_flag)
+                    continue;
+
+                // 判断是否是热点文件（非热点文件需要压缩）
+                if (HotJudge(full_path))
+                {
+                    std::string pack_dir_sub = _pack_dir + subdir;
+                    FileUtil fu_pack_dir(pack_dir_sub);
+                    fu_pack_dir.CreateDirectory();
+
+                    std::string pack_path = pack_dir_sub + a + _pack_suffix;
+                    info.pack_path = pack_path;
+                    FileUtil tmp(full_path);
+                    if (!tmp.Compress(info.pack_path))
+                    {
+                        std::cerr << "Compress failed for: " << full_path << std::endl;
+                        continue;
+                    }
+                    if (!tmp.Remove())
+                    {
+                        std::cerr << "Remove after compress failed: " << full_path << std::endl;
+                        // 压缩成功但删除失败，删除压缩文件
+                        FileUtil(pack_path).Remove();
+                        continue;
+                    }
+                    info.pack_flag = true;
+                    _data->Update(info);
+                    std::cerr << "File compressed: " << full_path << " -> " << pack_path << std::endl;
+                }
+            }
         }
     };
 }

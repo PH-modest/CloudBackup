@@ -3,6 +3,7 @@
 #include "data.hpp"
 #include "hot.hpp"
 #include "service.hpp"
+#include "user_manager.hpp"
 #include <thread>
 
 void FileUtilTest(const std::string &filename)
@@ -148,7 +149,14 @@ void DataTest(const std::string &filename)
     */
 }
 
-cloud::DataManager *_data;
+namespace cloud 
+{
+    Config* Config::_instance = nullptr;
+    std::mutex Config::_mutex;
+}
+
+cloud::DataManager *_data = nullptr;
+cloud::UserManager *_user_mgr = nullptr;
 void HotTest()
 {
     cloud::HotManager hot;
@@ -163,11 +171,13 @@ void ServiceTest()
 
 int main(int argc,char *argv[])
 {
+    _user_mgr = new cloud::UserManager();
     _data = new cloud::DataManager();
     std::thread thread_hot_manager(HotTest);
     std::thread thread_service(ServiceTest);
     thread_hot_manager.join();
     thread_service.join();
     delete _data;
+    delete _user_mgr;
     return 0;
 }
