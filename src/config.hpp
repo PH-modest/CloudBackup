@@ -26,6 +26,7 @@ namespace cloud
         std::string _backup_file;
         std::string _private_dir_prefix;
 
+        // 获取配置文件信息
         bool ReadConfigFile()
         {
             FileUtil fu(CONFIG_FILE);
@@ -55,7 +56,7 @@ namespace cloud
 
     public:
         static Config *GetInstance()
-        { // 内联实现
+        {
             if (_instance == nullptr)
             {
                 _mutex.lock();

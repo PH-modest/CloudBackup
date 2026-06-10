@@ -33,7 +33,6 @@ namespace cloud
         }
 
     public:
-        // 初始化
         HotManager()
         {
             Config *conf = Config::GetInstance();

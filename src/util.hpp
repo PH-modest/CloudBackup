@@ -19,8 +19,7 @@ namespace cloud
     public:
         FileUtil(const std::string &FileName)
             : _filename(FileName)
-        {
-        }
+        {}
         // 删除文件
         bool Remove()
         {
@@ -42,7 +41,6 @@ namespace cloud
             struct stat st;
             if (stat(_filename.c_str(), &st) < 0)
             {
-                // std::cout<<"Get file size failed!\n";
                 std::cout << "Get file size failed,errno: " << strerror(errno) << std::endl;
                 return -1;
             }
@@ -54,7 +52,7 @@ namespace cloud
             struct stat st;
             if (stat(_filename.c_str(), &st) < 0)
             {
-                std::cout << "Get file size failed!,errno:" << strerror(errno) << std::endl;
+                std::cout << "Get file mtime failed!,errno:" << strerror(errno) << std::endl;
                 return -1;
             }
             return st.st_mtime;
@@ -65,7 +63,7 @@ namespace cloud
             struct stat st;
             if (stat(_filename.c_str(), &st) < 0)
             {
-                std::cout << "Get file size failed,errno:" << strerror(errno) << std::endl;
+                std::cout << "Get file atime failed,errno:" << strerror(errno) << std::endl;
                 return -1;
             }
             return st.st_atime;
@@ -102,7 +100,7 @@ namespace cloud
                 std::cout << "read open file failed!\n";
                 return false;
             }
-            ifs.seekg(pos, std::ios::beg); // 从起始位置偏移pos单位
+            ifs.seekg(pos, std::ios::beg); // 从起始位置偏移pos单位 
             body->resize(len);             // 设置body大小
             ifs.read(&(*body)[0], len);    // 读取len个长度的字符到body中
             if (ifs.good() == false)       // 检查文件是否有问题

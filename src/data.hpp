@@ -20,7 +20,7 @@ namespace cloud
         std::string url_path;
         std::string uploader;
         std::string partition;
-        int download_count;  // 修改：添加下载次数字段
+        int download_count;
 
         bool NewBackupInfo(const std::string &realpath, const std::string &user, const std::string &part)
         {
@@ -41,7 +41,7 @@ namespace cloud
             this->url_path = config->GetDownloadPrefix() + user_dir + fu.FileName();
             this->uploader = user;
             this->partition = part;
-            this->download_count = 0;  // 修改：初始化下载次数为0
+            this->download_count = 0;
             return true;
         }
     } BackupInfo;
@@ -143,21 +143,24 @@ namespace cloud
                 info.fsize = fu.FileSize();
                 info.atime = fu.LastATime();
                 info.mtime = fu.LastMTime();
-                info.real_path = is_pack ? dir_path.substr(0, dir_path.find("pack/")) + "back/" + filename.substr(0, filename.size() - pack_suffix.size()) : full_path;  // 修正 real_path
-                // 修改：创建 dir_path 副本进行 replace 操作，避免 const 问题
+                info.real_path = is_pack ? dir_path.substr(0, dir_path.find("packdir/")) + "backdir/" + filename.substr(0, filename.size() - pack_suffix.size()) : full_path; // 修正 real_path
+                // 创建 dir_path 副本进行 replace 操作，避免 const 问题
                 std::string modified_dir = dir_path;
-                size_t pos = modified_dir.find("back/");
-                if (pos != std::string::npos) {
-                    modified_dir.replace(pos, 5, "pack/");
-                } else {
+                size_t pos = modified_dir.find("backdir/");
+                if (pos != std::string::npos)
+                {
+                    modified_dir.replace(pos, 5, "packdir/");
+                }
+                else
+                {
                     // 如果未找到 "back/"，使用原 dir_path（或根据实际路径调整，假设配置正确）
-                    std::cerr << "Warning: 'back/' not found in dir_path: " << dir_path << std::endl;
+                    std::cerr << "Warning: 'backdir/' not found in dir_path: " << dir_path << std::endl;
                 }
                 info.pack_path = is_pack ? full_path : modified_dir + filename + pack_suffix;
                 info.url_path = url_path;
                 info.uploader = default_uploader;
                 info.partition = partition;
-                info.download_count = 0;  // 修改：扫描添加时初始化下载次数为0
+                info.download_count = 0; // 扫描添加时初始化下载次数为0
 
                 Insert(info);
             }
@@ -170,20 +173,22 @@ namespace cloud
             _backup_file = conf->GetBackupFile();
             pthread_rwlock_init(&_rwlock, nullptr);
             InitLoad();
-            _storage_thread = std::thread([this]() {
-                while (true) {
-                    std::unique_lock<std::mutex> lock(_cv_mutex);
-                    _cv.wait(lock, [this]() { return _need_storage.load(); });
-                    Storage();
-                    _need_storage = false;
-                }
+            _storage_thread = std::thread([this]()                                          
+            {
+                while (true) 
+                {
+                    std::unique_lock<std::mutex> lock(_cv_mutex); // 加锁，保护共享区
+                    _cv.wait(lock, [this]() { return _need_storage.load(); }); // 高效等待
+                    Storage(); // 执行任务
+                    _need_storage = false; // 重置信号
+                } 
             });
         }
         ~DataManager()
         {
             _need_storage = true;
             _cv.notify_all();
-            _storage_thread.join();  // 作为最终保障，手动调用 Storage()
+            _storage_thread.join(); // 作为最终保障，手动调用 Storage()
             Storage();
             pthread_rwlock_destroy(&_rwlock);
         }
@@ -203,7 +208,7 @@ namespace cloud
             if (e == _table.end())
             {
                 pthread_rwlock_unlock(&_rwlock);
-                std::cerr << "Delete failed: URL not found - " << info.url_path << std::endl; // 新增日志
+                std::cerr << "Delete failed: URL not found - " << info.url_path << std::endl; 
                 return false;
             }
             _table.erase(e);
@@ -269,10 +274,10 @@ namespace cloud
             // 存储到Json中
             Json::Value root;
             for (int i = 0; i < arry.size(); i++)
-            {
+            {             
                 Json::Value tmp;
                 tmp["pack_flag"] = arry[i].pack_flag;
-                tmp["fsize"] = (Json::Int64)arry[i].fsize; // 类型转换
+                tmp["fsize"] = (Json::Int64)arry[i].fsize; 
                 tmp["atime"] = (Json::Int64)arry[i].atime;
                 tmp["mtime"] = (Json::Int64)arry[i].mtime;
                 tmp["pack_path"] = arry[i].pack_path;
@@ -280,7 +285,7 @@ namespace cloud
                 tmp["url_path"] = arry[i].url_path;
                 tmp["uploader"] = arry[i].uploader;
                 tmp["partition"] = arry[i].partition;
-                tmp["download_count"] = arry[i].download_count;  // 修改：序列化下载次数
+                tmp["download_count"] = arry[i].download_count; 
                 root.append(tmp);
             }
             // 序列化
@@ -289,13 +294,13 @@ namespace cloud
             // 重新写入文件
             FileUtil fu(_backup_file);
             fu.SetContent(body);
-            // std::cout << "Manual storage completed." << std::endl;  // 可选日志
+            // std::cout << "Manual storage completed." << std::endl;
             return true;
         }
         // 初始化加载,从配置文件中加载的
         bool InitLoad()
         {
-            // 先加载cloud.dat（原有逻辑）
+            // 先加载cloud.dat
             FileUtil fu(_backup_file);
             if (fu.Exists())
             {
@@ -316,8 +321,8 @@ namespace cloud
                         info.url_path = root[i]["url_path"].asString();
                         info.uploader = root[i]["uploader"].asString();
                         info.partition = root[i]["partition"].asString();
-                        info.download_count = root[i]["download_count"].asInt();  // 修改：反序列化下载次数（默认0如果不存在）
-                        Insert(info); // 注意：Insert会设置_need_storage，但我们稍后会统一存储
+                        info.download_count = root[i]["download_count"].asInt(); 
+                        Insert(info);  // Insert会设置_need_storage，但我们稍后会统一存储
                     }
                 }
                 else
