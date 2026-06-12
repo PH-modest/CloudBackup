@@ -207,7 +207,8 @@ namespace cloud
 
             std::string sql =
                 "UPDATE cloud_files SET "
-                "atime=" + std::to_string(info.atime) +
+                "atime=" +
+                std::to_string(info.atime) +
                 ", mtime=" + std::to_string(info.mtime) +
                 ", download_count=" + std::to_string(info.download_count) +
                 " WHERE url_path='" + Escape(info.url_path) + "'";
@@ -283,6 +284,22 @@ namespace cloud
         {
             // 数据库存储后不再根据真实磁盘路径查询。
             return false;
+        }
+
+        bool UpdateUploader(const std::string &old_user, const std::string &new_user)
+        {
+            pthread_rwlock_wrlock(&_rwlock);
+
+            std::string sql =
+                "UPDATE cloud_files SET uploader='" +
+                Escape(new_user) +
+                "' WHERE uploader='" +
+                Escape(old_user) + "'";
+
+            bool ret = ExecSQL(sql);
+
+            pthread_rwlock_unlock(&_rwlock);
+            return ret;
         }
 
         bool GetAll(std::vector<BackupInfo> *arry)

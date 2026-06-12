@@ -248,7 +248,7 @@ namespace cloud
 
         static bool IsAdmin(const std::string &user)
         {
-            return user == "admin";
+            return _user_mgr->IsAdmin(user);
         }
 
         static void Logout(const httplib::Request &req, httplib::Response &rsp)
@@ -267,28 +267,54 @@ namespace cloud
                 rsp.set_header("Content-Type", "text/html; charset=UTF-8");
                 return;
             }
-            else if (req.method == "POST")
+
+            if (req.method == "POST")
             {
-                auto params = req.params;
-                auto it_user = params.find("username");
-                auto it_pass = params.find("password");
-                if (it_user != params.end() && it_pass != params.end())
+                if (!req.has_param("username") || !req.has_param("password"))
                 {
-                    std::string user = it_user->second;
-                    std::string pass = it_pass->second;
-                    std::string stored_pass;
-                    if (_user_mgr->GetPassword(user, &stored_pass) && stored_pass == pass)
-                    {
-                        rsp.set_header("Set-Cookie", "username=" + user + "; Max-Age=3600; Path=/");
-                        rsp.status = 302;
-                        rsp.set_header("Location", "/main/");
-                        return;
-                    }
+                    rsp.body = R"(<script>alert("用户名或密码不能为空！"); history.back();</script>)";
+                    rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                    rsp.status = 400;
+                    return;
                 }
-                rsp.status = 401;
-                rsp.body = R"(<script>alert("登录失败！"); window.location='/login';</script>)";
-                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+
+                std::string user = req.get_param_value("username");
+                std::string pass = req.get_param_value("password");
+
+                if (user.empty() || pass.empty())
+                {
+                    rsp.body = R"(<script>alert("用户名或密码不能为空！"); history.back();</script>)";
+                    rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                    rsp.status = 400;
+                    return;
+                }
+
+                std::string real_pass;
+                if (!_user_mgr->GetPassword(user, &real_pass))
+                {
+                    rsp.body = R"(<script>alert("用户不存在，或数据库查询失败！"); history.back();</script>)";
+                    rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                    rsp.status = 401;
+                    return;
+                }
+
+                if (real_pass != pass)
+                {
+                    rsp.body = R"(<script>alert("密码错误！"); history.back();</script>)";
+                    rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                    rsp.status = 401;
+                    return;
+                }
+
+                // 注意：这里必须是 username，不是 user
+                rsp.set_header("Set-Cookie", "username=" + user + "; Max-Age=3600; Path=/");
+                rsp.status = 302;
+                rsp.set_header("Location", "/main/");
+                return;
             }
+
+            rsp.status = 405;
+            rsp.body = "Method Not Allowed";
         }
 
         static void Register(const httplib::Request &req, httplib::Response &rsp)
@@ -300,40 +326,61 @@ namespace cloud
                 rsp.set_header("Content-Type", "text/html; charset=UTF-8");
                 return;
             }
-            else if (req.method == "POST")
+
+            if (req.method == "POST")
             {
-                auto params = req.params;
-                auto it_user = params.find("username");
-                auto it_pass = params.find("password");
-                auto it_confirm = params.find("confirm_password");
-                if (it_user != params.end() && it_pass != params.end() && it_confirm != params.end())
+                if (!req.has_param("username") || !req.has_param("password") || !req.has_param("confirm_password"))
                 {
-                    std::string user = it_user->second;
-                    std::string pass = it_pass->second;
-                    std::string confirm = it_confirm->second;
-                    if (pass != confirm)
-                    {
-                        rsp.body = R"(<script>alert("密码不匹配！"); history.back();</script>)";
-                        rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-                        rsp.status = 400;
-                        return;
-                    }
-                    if (_user_mgr->UserExists(user))
-                    {
-                        rsp.body = R"(<script>alert("用户已存在！"); history.back();</script>)";
-                        rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-                        rsp.status = 409;
-                        return;
-                    }
-                    _user_mgr->AddUser(user, pass);
-                    rsp.status = 302;
-                    rsp.set_header("Location", "/login");
+                    rsp.body = R"(<script>alert("注册参数不完整！"); history.back();</script>)";
+                    rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                    rsp.status = 400;
                     return;
                 }
-                rsp.body = R"(<script>alert("注册失败！"); history.back();</script>)";
+
+                std::string user = req.get_param_value("username");
+                std::string pass = req.get_param_value("password");
+                std::string confirm = req.get_param_value("confirm_password");
+
+                if (user.empty() || pass.empty() || confirm.empty())
+                {
+                    rsp.body = R"(<script>alert("用户名或密码不能为空！"); history.back();</script>)";
+                    rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                    rsp.status = 400;
+                    return;
+                }
+
+                if (pass != confirm)
+                {
+                    rsp.body = R"(<script>alert("两次输入的密码不一致！"); history.back();</script>)";
+                    rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                    rsp.status = 400;
+                    return;
+                }
+
+                if (_user_mgr->UserExists(user))
+                {
+                    rsp.body = R"(<script>alert("用户已存在！"); history.back();</script>)";
+                    rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                    rsp.status = 409;
+                    return;
+                }
+
+                if (!_user_mgr->AddUser(user, pass))
+                {
+                    rsp.body = R"(<script>alert("注册失败：数据库写入错误！"); history.back();</script>)";
+                    rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                    rsp.status = 500;
+                    return;
+                }
+
+                rsp.body = R"(<script>alert("注册成功，请登录！"); window.location='/login';</script>)";
                 rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-                rsp.status = 400;
+                rsp.status = 200;
+                return;
             }
+
+            rsp.status = 405;
+            rsp.body = "Method Not Allowed";
         }
 
         static void UserInfo(const httplib::Request &req, httplib::Response &rsp)
@@ -398,182 +445,100 @@ namespace cloud
                 return;
             }
 
-            std::string user = GetUsername(req);
-            if (!req.has_header("Content-Type") || req.get_header_value("Content-Type").find("multipart/form-data") == std::string::npos)
+            if (!req.is_multipart_form_data())
             {
-                std::cerr << "Invalid Content-Type: " << req.get_header_value("Content-Type")
-                          << ", Body size: " << req.body.size() << std::endl;
-                rsp.body = R"(<script>alert("上传失败：无效的请求格式！"); history.back();</script>)";
+                rsp.body = R"(<script>alert("上传请求格式错误！"); history.back();</script>)";
                 rsp.set_header("Content-Type", "text/html; charset=UTF-8");
                 rsp.status = 400;
                 return;
             }
 
-            if (req.files.empty() || req.files.find("file") == req.files.end())
+            if (!req.has_file("file"))
             {
-                std::cerr << "No file found in request." << std::endl;
-                rsp.body = R"(<script>alert("上传失败：没有选择文件！"); history.back();</script>)";
+                rsp.body = R"(<script>alert("没有选择文件！"); history.back();</script>)";
                 rsp.set_header("Content-Type", "text/html; charset=UTF-8");
                 rsp.status = 400;
                 return;
             }
 
-            const auto &uploaded_file = req.files.find("file")->second;
-            std::string orig_filename = uploaded_file.filename;
-            std::string file_content = uploaded_file.content;
+            auto file = req.get_file_value("file");
 
-            if (orig_filename.empty() || file_content.empty())
+            std::string filename = file.filename;
+            std::string file_content = file.content;
+
+            if (filename.empty())
             {
-                std::cerr << "Invalid file: Filename: " << orig_filename << ", Size: " << file_content.size() << std::endl;
-                rsp.body = R"(<script>alert("上传失败：文件无效或为空！"); history.back();</script>)";
+                rsp.body = R"(<script>alert("文件名不能为空！"); history.back();</script>)";
                 rsp.set_header("Content-Type", "text/html; charset=UTF-8");
                 rsp.status = 400;
                 return;
             }
 
-            if (file_content.size() > 100 * 1024 * 1024)
-            { // 添加大小上限检查，防止内存溢出
-                std::cerr << "File too large: " << file_content.size() << std::endl;
-                rsp.body = R"(<script>alert("文件太大！上限100MB"); history.back();</script>)";
+            // 简单处理路径穿越，避免文件名中带 ../
+            while (filename.find("/") != std::string::npos)
+            {
+                filename = filename.substr(filename.find("/") + 1);
+            }
+            while (filename.find("\\") != std::string::npos)
+            {
+                filename = filename.substr(filename.find("\\") + 1);
+            }
+
+            const size_t max_file_size = 50 * 1024 * 1024;
+            if (file_content.size() > max_file_size)
+            {
+                rsp.body = R"(<script>alert("文件过大，最大只能上传 50MB！"); history.back();</script>)";
                 rsp.set_header("Content-Type", "text/html; charset=UTF-8");
                 rsp.status = 413;
                 return;
             }
 
-            // Sanitize filename: 只清理危险字符（路径分隔符、控制字符等），保留中文字符
-            std::string filename = orig_filename;
-            // 移除路径分隔符和其他危险字符
-            std::string dangerous_chars = "/\\:*?\"<>|";
-            for (char c : dangerous_chars)
-            {
-                size_t pos = 0;
-                while ((pos = filename.find(c, pos)) != std::string::npos)
-                {
-                    filename.replace(pos, 1, "_");
-                    pos++;
-                }
-            }
-            // 移除控制字符（ASCII 0-31，除了常见的空白字符）
-            for (int i = 0; i < 32; i++)
-            {
-                if (i != 9 && i != 10 && i != 13) // 保留 tab, newline, carriage return
-                {
-                    char c = static_cast<char>(i);
-                    size_t pos = 0;
-                    while ((pos = filename.find(c, pos)) != std::string::npos)
-                    {
-                        filename.replace(pos, 1, "_");
-                        pos++;
-                    }
-                }
-            }
-            // 移除文件名末尾的点或空格（Windows 不允许）
-            while (!filename.empty() && (filename.back() == '.' || filename.back() == ' '))
-            {
-                filename.pop_back();
-            }
-            if (filename.empty())
-            {
-                std::cerr << "Sanitized filename empty. Original: " << orig_filename << std::endl;
-                rsp.body = R"(<script>alert("文件名无效！"); history.back();</script>)";
-                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-                rsp.status = 400;
-                return;
-            }
+            std::string user = GetUsername(req);
 
-            // 从 multipart/form-data 中获取 partition 参数
-            // httplib 会将 multipart 中的非文件字段也放入 files map 中
-            std::string partition = "private"; // 默认值
-
-            // 首先尝试从 params 中获取（URL 参数或已解析的表单数据）
+            std::string partition = "private";
             if (req.has_param("partition"))
             {
                 partition = req.get_param_value("partition");
             }
-            else
-            {
-                // 对于 multipart/form-data，非文件字段也会在 files 中
-                auto it = req.files.find("partition");
-                if (it != req.files.end())
-                {
-                    partition = it->second.content;
-                    // 移除可能的换行符和空白字符
-                    if (!partition.empty())
-                    {
-                        partition.erase(0, partition.find_first_not_of(" \t\r\n"));
-                        if (!partition.empty())
-                        {
-                            partition.erase(partition.find_last_not_of(" \t\r\n") + 1);
-                        }
-                    }
-                }
-            }
 
-            // 确保 partition 值有效
-            if (partition != "public" && partition != "private")
+            if (partition != "private" && partition != "public")
             {
-                std::cerr << "Invalid partition value: '" << partition << "', using default: private" << std::endl;
                 partition = "private";
             }
 
-            std::cerr << "Upload partition: " << partition << " (has_param: " << req.has_param("partition")
-                      << ", files.count: " << req.files.count("partition") << ")" << std::endl;
-
             Config *conf = Config::GetInstance();
-            std::string user_dir = (partition == "private" ? conf->GetPrivateDirPrefix() + user + "/" : partition + "/");
-            std::string final_dir = conf->GetBackDir() + user_dir;
-            FileUtil fu_dir(final_dir);
-            if (!fu_dir.CreateDirectory())
-            {
-                std::cerr << "Failed to create final dir: " << final_dir << ", errno: " << strerror(errno) << std::endl;
-                rsp.body = R"(<script>alert("上传失败：无法创建存储目录！"); history.back();</script>)";
-                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-                rsp.status = 500;
-                return;
-            }
 
-            std::string final_path = final_dir + filename;
-            if (FileUtil(final_path).Exists())
+            std::string user_dir = (partition == "private"
+                                        ? conf->GetPrivateDirPrefix() + user + "/"
+                                        : "public/");
+
+            std::string url_path = conf->GetDownloadPrefix() + user_dir + filename;
+
+            BackupInfo old_info;
+            if (_data->GetOneByURL(url_path, &old_info))
             {
-                std::cerr << "File already exists: " << final_path << std::endl;
                 rsp.body = R"(<script>alert("文件已存在！"); history.back();</script>)";
                 rsp.set_header("Content-Type", "text/html; charset=UTF-8");
                 rsp.status = 409;
                 return;
             }
 
-            // 直接写入最终路径
-            FileUtil fu_final(final_path);
-            if (!fu_final.SetContent(file_content))
-            {
-                std::cerr << "Failed to write file: " << final_path << ", errno: " << strerror(errno) << std::endl;
-                rsp.body = R"(<script>alert("上传失败：写入文件错误！"); history.back();</script>)";
-                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-                rsp.status = 500;
-                return;
-            }
-
-            // 完整性校验
-            if (fu_final.FileSize() != static_cast<int64_t>(file_content.size()))
-            {
-                std::cerr << "Size mismatch: expected " << file_content.size() << ", actual " << fu_final.FileSize() << std::endl;
-                fu_final.Remove();
-                rsp.body = R"(<script>alert("文件完整性校验失败！"); history.back();</script>)";
-                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-                rsp.status = 500;
-                return;
-            }
-
             BackupInfo info;
-            if (!info.NewBackupInfo(final_path, user, partition))
+            if (!info.NewBackupInfoForDB(filename, file_content, user, partition))
             {
-                fu_final.Remove();
-                rsp.body = R"(<script>alert("备份信息初始化失败！"); history.back();</script>)";
+                rsp.body = R"(<script>alert("文件信息初始化失败！"); history.back();</script>)";
                 rsp.set_header("Content-Type", "text/html; charset=UTF-8");
                 rsp.status = 500;
                 return;
             }
-            _data->Insert(info);
+
+            if (!_data->Insert(info))
+            {
+                rsp.body = R"(<script>alert("上传失败：写入数据库错误！"); history.back();</script>)";
+                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
+                rsp.status = 500;
+                return;
+            }
 
             std::string redirect_path = (partition == "private" ? "/main/private/" : "/main/public/");
             rsp.status = 302;
@@ -655,7 +620,7 @@ namespace cloud
             for (int i = private_start; i < private_end; i++)
             {
                 const auto &info = private_files[i];
-                std::string fname = FileUtil(info.real_path).FileName();
+                std::string fname = info.file_name;
                 std::string size_str = std::to_string(info.fsize / 1024) + " KB";
                 std::string time_str = FormatTime(info.mtime);
                 std::string download_link = info.url_path;
@@ -678,11 +643,11 @@ namespace cloud
             for (int i = public_start; i < public_end; i++)
             {
                 const auto &info = public_files[i];
-                std::string fname = FileUtil(info.real_path).FileName();
+                std::string fname = info.file_name;
                 std::string size_str = std::to_string(info.fsize / 1024) + " KB";
                 std::string time_str = FormatTime(info.mtime);
                 std::string download_link = info.url_path;
-                //std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
+                // std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path);
                 std::string delete_link = "/delete?url=" + httplib::detail::encode_url(info.url_path) + "&partition=public&page=" + std::to_string(page);
                 std::string download_count_str = std::to_string(info.download_count);
 
@@ -812,7 +777,7 @@ namespace cloud
             for (int i = private_start; i < private_end; i++)
             {
                 const auto &info = private_files[i];
-                std::string fname = FileUtil(info.real_path).FileName();
+                std::string fname = info.file_name;
                 std::string size_str = std::to_string(info.fsize / 1024) + " KB";
                 std::string time_str = FormatTime(info.mtime);
                 std::string download_link = info.url_path;
@@ -833,7 +798,7 @@ namespace cloud
             for (int i = public_start; i < public_end; i++)
             {
                 const auto &info = public_files[i];
-                std::string fname = FileUtil(info.real_path).FileName();
+                std::string fname = info.file_name;
                 std::string size_str = std::to_string(info.fsize / 1024) + " KB";
                 std::string time_str = FormatTime(info.mtime);
                 std::string download_link = info.url_path;
@@ -964,7 +929,7 @@ namespace cloud
             for (int i = private_start; i < private_end; i++)
             {
                 const auto &info = private_files[i];
-                std::string fname = FileUtil(info.real_path).FileName();
+                std::string fname = info.file_name;
                 std::string size_str = std::to_string(info.fsize / 1024) + " KB";
                 std::string time_str = FormatTime(info.mtime);
                 std::string download_link = info.url_path;
@@ -985,7 +950,7 @@ namespace cloud
             for (int i = public_start; i < public_end; i++)
             {
                 const auto &info = public_files[i];
-                std::string fname = FileUtil(info.real_path).FileName();
+                std::string fname = info.file_name;
                 std::string size_str = std::to_string(info.fsize / 1024) + " KB";
                 std::string time_str = FormatTime(info.mtime);
                 std::string download_link = info.url_path;
@@ -1089,7 +1054,7 @@ namespace cloud
 
             for (const auto &info : all)
             {
-                std::string fname = FileUtil(info.real_path).FileName();
+                std::string fname = info.file_name;
                 // 文件名不匹配则跳过
                 if (fname.find(keyword) == std::string::npos)
                     continue;
@@ -1132,7 +1097,7 @@ namespace cloud
             for (int i = private_start; i < private_end; i++)
             {
                 const auto &info = private_files[i];
-                std::string fname = FileUtil(info.real_path).FileName();
+                std::string fname = info.file_name;
                 std::string size_str = std::to_string(info.fsize / 1024) + " KB";
                 std::string time_str = FormatTime(info.mtime);
                 std::string download_link = info.url_path;
@@ -1153,7 +1118,7 @@ namespace cloud
             for (int i = public_start; i < public_end; i++)
             {
                 const auto &info = public_files[i];
-                std::string fname = FileUtil(info.real_path).FileName();
+                std::string fname = info.file_name;
                 std::string size_str = std::to_string(info.fsize / 1024) + " KB";
                 std::string time_str = FormatTime(info.mtime);
                 std::string download_link = info.url_path;
@@ -1219,6 +1184,7 @@ namespace cloud
                 rsp.set_header("Location", "/login");
                 return;
             }
+
             std::string url = req.has_param("url") ? req.get_param_value("url") : "";
             if (url.empty())
             {
@@ -1227,6 +1193,7 @@ namespace cloud
                 rsp.status = 400;
                 return;
             }
+
             BackupInfo info;
             if (!_data->GetOneByURL(url, &info))
             {
@@ -1235,6 +1202,7 @@ namespace cloud
                 rsp.status = 404;
                 return;
             }
+
             std::string user = GetUsername(req);
             if (info.uploader != user && !IsAdmin(user))
             {
@@ -1243,94 +1211,43 @@ namespace cloud
                 rsp.status = 403;
                 return;
             }
-            // 根据 pack_flag 判断文件位置
-            // 如果 pack_flag = true，文件在 packdir 中（压缩文件）
-            // 如果 pack_flag = false，文件在 backdir 中（源文件）
-            bool delete_success = true;
 
-            if (info.pack_flag)
-            {
-                // 文件被压缩，删除 packdir 中的压缩文件
-                FileUtil fu_pack(info.pack_path);
-                if (fu_pack.Exists())
-                {
-                    if (!fu_pack.Remove())
-                    {
-                        std::cerr << "Failed to remove pack_path: " << info.pack_path << ", errno: " << strerror(errno) << std::endl;
-                        delete_success = false;
-                    }
-                }
-                else
-                {
-                    std::cerr << "Compressed file not found: " << info.pack_path << std::endl;
-                    delete_success = false;
-                }
-            }
-            else
-            {
-                // 文件未压缩，删除 backdir 中的源文件
-                FileUtil fu_real(info.real_path);
-                if (fu_real.Exists())
-                {
-                    if (!fu_real.Remove())
-                    {
-                        std::cerr << "Failed to remove real_path: " << info.real_path << ", errno: " << strerror(errno) << std::endl;
-                        delete_success = false;
-                    }
-                }
-                else
-                {
-                    std::cerr << "Source file not found: " << info.real_path << std::endl;
-                    delete_success = false;
-                }
-            }
-
-            if (!delete_success)
-            {
-                rsp.body = R"(<script>alert("文件在磁盘上未找到或删除失败！"); history.back();</script>)";
-                rsp.set_header("Content-Type", "text/html; charset=UTF-8");
-                rsp.status = 404;
-                return;
-            }
-
-            if (delete_success && _data->Delete(info))
-            {
-                rsp.status = 302;
-                // 删除后重定向到主页面，显示所有文件
-                // rsp.set_header("Location", "/main/?msg=delete_success");
-                // 根据传入的分区和分页信息重定向回原页面
-                std::string partition = req.get_param_value("partition");
-                std::string page = req.get_param_value("page");
-                std::string redirect_url = "/main/";
-
-                if (!partition.empty())
-                {
-                    redirect_url += partition + "/";
-                    if (!page.empty())
-                    {
-                        redirect_url += "?page=" + page;
-                    }
-                }
-                else
-                {
-                    redirect_url += "?msg=delete_success";
-                }
-
-                rsp.set_header("Location", redirect_url);
-            }
-            else
+            if (!_data->Delete(info))
             {
                 rsp.body = R"(<script>alert("删除失败！"); history.back();</script>)";
                 rsp.set_header("Content-Type", "text/html; charset=UTF-8");
                 rsp.status = 500;
+                return;
             }
+
+            rsp.status = 302;
+
+            std::string partition = req.has_param("partition") ? req.get_param_value("partition") : "";
+            std::string page = req.has_param("page") ? req.get_param_value("page") : "";
+
+            std::string redirect_url = "/main/";
+
+            if (!partition.empty())
+            {
+                redirect_url += partition + "/";
+                if (!page.empty())
+                {
+                    redirect_url += "?page=" + page;
+                }
+            }
+            else
+            {
+                redirect_url += "?msg=delete_success";
+            }
+
+            rsp.set_header("Location", redirect_url);
         }
 
         static std::string GetETag(const BackupInfo &info)
         {
-            FileUtil fu(info.real_path);
-            std::string etag = fu.FileName();
-            etag += "-" + std::to_string(info.fsize) + "-" + std::to_string(info.mtime);
+            std::string etag = info.file_name;
+            etag += "-" + std::to_string(info.fsize);
+            etag += "-" + std::to_string(info.mtime);
             return etag;
         }
 
@@ -1344,92 +1261,39 @@ namespace cloud
                 return;
             }
 
-            // 如果文件被压缩，需要从 packdir 解压到 backdir
-            if (info.pack_flag)
+            // 私有文件必须登录，并且只能本人或管理员下载
+            if (info.partition == "private")
             {
-                // 压缩文件在 packdir 中
-                FileUtil fu_pack(info.pack_path);
-                if (!fu_pack.Exists())
+                if (!IsLoggedIn(req))
                 {
-                    rsp.status = 404;
-                    rsp.body = "Compressed file not found";
+                    rsp.status = 302;
+                    rsp.set_header("Location", "/login");
                     return;
                 }
 
-                // 确保 backdir 中的目标目录存在
-                std::string real_dir = info.real_path.substr(0, info.real_path.find_last_of('/'));
-                FileUtil(real_dir).CreateDirectory();
-
-                // 解压文件到 backdir
-                if (!fu_pack.UnCompress(info.real_path))
+                std::string user = GetUsername(req);
+                if (info.uploader != user && !IsAdmin(user))
                 {
-                    rsp.status = 500;
-                    rsp.body = "Failed to decompress file";
+                    rsp.status = 403;
+                    rsp.body = "无权限访问该文件";
                     return;
                 }
-
-                // 解压成功后，删除压缩文件（下次长时间未访问会再次压缩）
-                if (!fu_pack.Remove())
-                {
-                    std::cerr << "Failed to remove compressed file: " << info.pack_path << std::endl;
-                }
-
-                // 更新文件信息
-                FileUtil fu_real(info.real_path);
-                info.pack_flag = false;
-                info.fsize = fu_real.FileSize();
-                info.mtime = fu_real.LastMTime();
-                info.atime = time(nullptr); // 更新访问时间为当前时间
-                _data->Update(info);
             }
 
-            // 从 backdir 读取文件（此时文件一定在 backdir 中）
-            FileUtil fu(info.real_path);
-            if (!fu.Exists())
-            {
-                rsp.status = 404;
-                rsp.body = "File not found in backdir";
-                return;
-            }
-
-            // 更新文件的访问时间
             time_t now = time(nullptr);
-#ifdef _WIN32
-            // Windows 上更新访问时间
-            struct _utimbuf ut;
-            ut.actime = now;
-            ut.modtime = fu.LastMTime();
-            _utime(info.real_path.c_str(), &ut);
-#else
-            // Linux 上更新访问时间
-            struct utimbuf ut;
-            ut.actime = now;
-            ut.modtime = fu.LastMTime();
-            utime(info.real_path.c_str(), &ut);
-#endif
-
-            // 更新 BackupInfo 中的访问时间
             info.atime = now;
+            info.download_count++;
 
-            bool retrans = false;
-            std::string old_etag;
-            if (req.has_header("If-Range"))
-            {
-                old_etag = req.get_header_value("If-Range");
-                if (old_etag == GetETag(info))
-                {
-                    retrans = true;
-                }
-            }
-
-            fu.GetContent(&rsp.body);
+            rsp.body = info.file_data;
             rsp.set_header("Accept-Ranges", "bytes");
             rsp.set_header("ETag", GetETag(info));
             rsp.set_header("Content-Type", "application/octet-stream");
-            rsp.status = retrans ? 206 : 200;
 
-            // 更新下载计数和访问时间
-            info.download_count++;
+            std::string disposition = "attachment; filename=\"" + info.file_name + "\"";
+            rsp.set_header("Content-Disposition", disposition);
+
+            rsp.status = 200;
+
             _data->Update(info);
         }
 
@@ -1440,11 +1304,6 @@ namespace cloud
             _server_port = conf->GetServerPort();
             _server_ip = conf->GetServerIp();
             _download_prefix = conf->GetDownloadPrefix();
-
-            std::string back_public = conf->GetBackDir() + "public/";
-            std::string pack_public = conf->GetPackDir() + "public/";
-            FileUtil(back_public).CreateDirectory();
-            FileUtil(pack_public).CreateDirectory();
         }
         bool RunModule()
         {
