@@ -1,71 +1,164 @@
 #pragma once
+
 #include "util.hpp"
-#include <unordered_map>
+#include "config.hpp"
+#include <mysql/mysql.h>
 #include <pthread.h>
-#include <thread>
-#include <atomic>
-#include <condition_variable>
+#include <string>
+#include <iostream>
+#include <ctime>
 
 namespace cloud
 {
-#define USERS_FILE "./users.dat"
-
     class UserManager
     {
     private:
-        std::string _users_file;
-        std::unordered_map<std::string, std::string> _users;
+        MYSQL *_mysql;
         pthread_rwlock_t _rwlock;
 
-        std::atomic<bool> _need_storage{false};
-        std::thread _storage_thread;
-        std::condition_variable _cv;
-        std::mutex _cv_mutex;
+    private:
+        bool Connect()
+        {
+            Config *conf = Config::GetInstance();
+
+            _mysql = mysql_init(nullptr);
+            if (_mysql == nullptr)
+            {
+                std::cerr << "mysql_init failed in UserManager" << std::endl;
+                return false;
+            }
+
+            mysql_options(_mysql, MYSQL_SET_CHARSET_NAME, "utf8mb4");
+
+            if (mysql_real_connect(_mysql,
+                                   conf->GetMysqlHost().c_str(),
+                                   conf->GetMysqlUser().c_str(),
+                                   conf->GetMysqlPass().c_str(),
+                                   conf->GetMysqlDB().c_str(),
+                                   conf->GetMysqlPort(),
+                                   nullptr,
+                                   0) == nullptr)
+            {
+                std::cerr << "mysql_real_connect failed in UserManager: "
+                          << mysql_error(_mysql) << std::endl;
+                mysql_close(_mysql);
+                _mysql = nullptr;
+                return false;
+            }
+
+            return true;
+        }
+
+        bool ExecSQL(const std::string &sql)
+        {
+            if (_mysql == nullptr)
+            {
+                std::cerr << "mysql connection is null in UserManager" << std::endl;
+                return false;
+            }
+
+            if (mysql_query(_mysql, sql.c_str()) != 0)
+            {
+                std::cerr << "mysql_query failed in UserManager: "
+                          << mysql_error(_mysql)
+                          << "\nSQL: " << sql << std::endl;
+                return false;
+            }
+
+            return true;
+        }
+
+        std::string Escape(const std::string &src)
+        {
+            if (_mysql == nullptr || src.empty())
+            {
+                return "";
+            }
+
+            std::string dst;
+            dst.resize(src.size() * 2 + 1);
+
+            unsigned long len = mysql_real_escape_string(
+                _mysql,
+                &dst[0],
+                src.data(),
+                src.size());
+
+            dst.resize(len);
+            return dst;
+        }
+
+        void InitDefaultAdmin()
+        {
+            if (UserExists("admin"))
+            {
+                return;
+            }
+
+            time_t now = time(nullptr);
+
+            std::string sql =
+                "INSERT INTO cloud_users "
+                "(username, password, user_role, created_at, updated_at) "
+                "VALUES ('admin', 'password', 'admin', " +
+                std::to_string(now) + ", " + std::to_string(now) + ")";
+
+            ExecSQL(sql);
+        }
 
     public:
         UserManager()
-            : _users_file(USERS_FILE)
+            : _mysql(nullptr)
         {
-            pthread_rwlock_init(&_rwlock, NULL);
-            InitLoad();
+            pthread_rwlock_init(&_rwlock, nullptr);
 
-            _storage_thread = std::thread([this]() {
-                while (true) {
-                    std::unique_lock<std::mutex> lock(_cv_mutex);
-                    _cv.wait_for(lock, std::chrono::seconds(1), [this]() { return _need_storage.load(); });
+            if (!Connect())
+            {
+                std::cerr << "connect mysql failed in UserManager!" << std::endl;
+                return;
+            }
 
-                    if (_need_storage.load()) {
-                        pthread_rwlock_rdlock(&_rwlock);
-                        Json::Value root;
-                        for (const auto &p : _users) {
-                            Json::Value user;
-                            user["username"] = p.first;
-                            user["password"] = p.second;
-                            root.append(user);
-                        }
-                        pthread_rwlock_unlock(&_rwlock);
-
-                        std::string body;
-                        JsonUtil::Serialize(root, &body);
-                        FileUtil fu(_users_file);
-                        fu.SetContent(body);
-
-                        _need_storage = false;
-                    }
-                }
-            });
-            _storage_thread.detach();
+            InitDefaultAdmin();
         }
 
         ~UserManager()
         {
+            if (_mysql)
+            {
+                mysql_close(_mysql);
+                _mysql = nullptr;
+            }
+
             pthread_rwlock_destroy(&_rwlock);
         }
 
         bool UserExists(const std::string &user)
         {
             pthread_rwlock_rdlock(&_rwlock);
-            bool exists = _users.count(user) > 0;
+
+            std::string sql =
+                "SELECT id FROM cloud_users WHERE username='" +
+                Escape(user) + "' LIMIT 1";
+
+            if (mysql_query(_mysql, sql.c_str()) != 0)
+            {
+                std::cerr << "UserExists failed: " << mysql_error(_mysql) << std::endl;
+                pthread_rwlock_unlock(&_rwlock);
+                return false;
+            }
+
+            MYSQL_RES *res = mysql_store_result(_mysql);
+            if (res == nullptr)
+            {
+                std::cerr << "mysql_store_result failed: " << mysql_error(_mysql) << std::endl;
+                pthread_rwlock_unlock(&_rwlock);
+                return false;
+            }
+
+            MYSQL_ROW row = mysql_fetch_row(res);
+            bool exists = (row != nullptr);
+
+            mysql_free_result(res);
             pthread_rwlock_unlock(&_rwlock);
             return exists;
         }
@@ -73,68 +166,132 @@ namespace cloud
         bool GetPassword(const std::string &user, std::string *pass)
         {
             pthread_rwlock_rdlock(&_rwlock);
-            auto it = _users.find(user);
-            if (it == _users.end()) {
+
+            std::string sql =
+                "SELECT password FROM cloud_users WHERE username='" +
+                Escape(user) + "' LIMIT 1";
+
+            if (mysql_query(_mysql, sql.c_str()) != 0)
+            {
+                std::cerr << "GetPassword failed: " << mysql_error(_mysql) << std::endl;
                 pthread_rwlock_unlock(&_rwlock);
                 return false;
             }
-            *pass = it->second;
-            pthread_rwlock_unlock(&_rwlock);
-            return true;
-        }
 
-        void AddUser(const std::string &user, const std::string &pass)
-        {
-            pthread_rwlock_wrlock(&_rwlock);
-            _users[user] = pass;
-            _need_storage = true;
-            _cv.notify_one();
-            pthread_rwlock_unlock(&_rwlock);
-        }
-
-        void UpdateUsername(const std::string &old_user, const std::string &new_user)
-        {
-            pthread_rwlock_wrlock(&_rwlock);
-            auto it = _users.find(old_user);
-            if (it != _users.end()) {
-                std::string pass = it->second;
-                _users.erase(it);
-                _users[new_user] = pass;
-                _need_storage = true;
-                _cv.notify_one();
-            }
-            pthread_rwlock_unlock(&_rwlock);
-        }
-
-        void UpdatePassword(const std::string &user, const std::string &new_pass)
-        {
-            pthread_rwlock_wrlock(&_rwlock);
-            _users[user] = new_pass;
-            _need_storage = true;
-            _cv.notify_one();
-            pthread_rwlock_unlock(&_rwlock);
-        }
-
-        bool InitLoad()
-        {
-            FileUtil fu(_users_file);
-            if (!fu.Exists()) {
-                // 初始化 admin
-                AddUser("admin", "password");
-                return true;
-            }
-            std::string body;
-            fu.GetContent(&body);
-            Json::Value root;
-            if (!JsonUtil::UnSerialize(body, &root)) {
+            MYSQL_RES *res = mysql_store_result(_mysql);
+            if (res == nullptr)
+            {
+                std::cerr << "mysql_store_result failed: " << mysql_error(_mysql) << std::endl;
+                pthread_rwlock_unlock(&_rwlock);
                 return false;
             }
-            for (int i = 0; i < root.size(); ++i) {
-                std::string user = root[i]["username"].asString();
-                std::string pass = root[i]["password"].asString();
-                _users[user] = pass;
+
+            MYSQL_ROW row = mysql_fetch_row(res);
+            if (row == nullptr)
+            {
+                mysql_free_result(res);
+                pthread_rwlock_unlock(&_rwlock);
+                return false;
             }
+
+            *pass = row[0] ? row[0] : "";
+
+            mysql_free_result(res);
+            pthread_rwlock_unlock(&_rwlock);
             return true;
+        }
+
+        bool AddUser(const std::string &user, const std::string &pass)
+        {
+            pthread_rwlock_wrlock(&_rwlock);
+
+            time_t now = time(nullptr);
+
+            std::string sql =
+                "INSERT INTO cloud_users "
+                "(username, password, user_role, created_at, updated_at) "
+                "VALUES ('" +
+                Escape(user) + "', '" +
+                Escape(pass) + "', 'user', " +
+                std::to_string(now) + ", " +
+                std::to_string(now) + ")";
+
+            bool ret = ExecSQL(sql);
+
+            pthread_rwlock_unlock(&_rwlock);
+            return ret;
+        }
+
+        bool UpdateUsername(const std::string &old_user, const std::string &new_user)
+        {
+            pthread_rwlock_wrlock(&_rwlock);
+
+            time_t now = time(nullptr);
+
+            std::string sql =
+                "UPDATE cloud_users SET username='" +
+                Escape(new_user) +
+                "', updated_at=" + std::to_string(now) +
+                " WHERE username='" + Escape(old_user) + "'";
+
+            bool ret = ExecSQL(sql);
+
+            pthread_rwlock_unlock(&_rwlock);
+            return ret;
+        }
+
+        bool UpdatePassword(const std::string &user, const std::string &new_pass)
+        {
+            pthread_rwlock_wrlock(&_rwlock);
+
+            time_t now = time(nullptr);
+
+            std::string sql =
+                "UPDATE cloud_users SET password='" +
+                Escape(new_pass) +
+                "', updated_at=" + std::to_string(now) +
+                " WHERE username='" + Escape(user) + "'";
+
+            bool ret = ExecSQL(sql);
+
+            pthread_rwlock_unlock(&_rwlock);
+            return ret;
+        }
+
+        bool IsAdmin(const std::string &user)
+        {
+            pthread_rwlock_rdlock(&_rwlock);
+
+            std::string sql =
+                "SELECT user_role FROM cloud_users WHERE username='" +
+                Escape(user) + "' LIMIT 1";
+
+            if (mysql_query(_mysql, sql.c_str()) != 0)
+            {
+                std::cerr << "IsAdmin failed: " << mysql_error(_mysql) << std::endl;
+                pthread_rwlock_unlock(&_rwlock);
+                return false;
+            }
+
+            MYSQL_RES *res = mysql_store_result(_mysql);
+            if (res == nullptr)
+            {
+                std::cerr << "mysql_store_result failed: " << mysql_error(_mysql) << std::endl;
+                pthread_rwlock_unlock(&_rwlock);
+                return false;
+            }
+
+            MYSQL_ROW row = mysql_fetch_row(res);
+            bool is_admin = false;
+
+            if (row != nullptr && row[0] != nullptr)
+            {
+                is_admin = (std::string(row[0]) == "admin");
+            }
+
+            mysql_free_result(res);
+            pthread_rwlock_unlock(&_rwlock);
+            return is_admin;
         }
     };
 }
