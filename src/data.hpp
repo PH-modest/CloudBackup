@@ -1,11 +1,13 @@
 #pragma once
+
 #include "util.hpp"
 #include "config.hpp"
-#include <unordered_map>
+#include <mysql/mysql.h>
 #include <pthread.h>
-#include <thread>
-#include <atomic>
-#include <condition_variable>
+#include <vector>
+#include <string>
+#include <iostream>
+#include <ctime>
 
 namespace cloud
 {
@@ -15,6 +17,9 @@ namespace cloud
         size_t fsize;
         time_t atime;
         time_t mtime;
+
+        // 为了兼容 service.hpp 中部分旧逻辑，字段仍然保留
+        // 数据库存储后，real_path 不再是真实磁盘路径，而是保存文件名
         std::string real_path;
         std::string pack_path;
         std::string url_path;
@@ -22,26 +27,37 @@ namespace cloud
         std::string partition;
         int download_count;
 
-        bool NewBackupInfo(const std::string &realpath, const std::string &user, const std::string &part)
+        // 新增：数据库存储文件时使用
+        std::string file_name;
+        std::string file_data;
+
+        bool NewBackupInfoForDB(const std::string &filename,
+                                const std::string &content,
+                                const std::string &user,
+                                const std::string &part)
         {
-            FileUtil fu(realpath);
-            if (fu.Exists() == false)
-            {
-                std::cout << "new backupinfo: file not exists!\n";
-                return false;
-            }
             Config *config = Config::GetInstance();
+
             this->pack_flag = false;
-            this->fsize = fu.FileSize();
-            this->atime = fu.LastATime();
-            this->mtime = fu.LastMTime();
-            this->real_path = realpath;
-            std::string user_dir = (part == "private" ? config->GetPrivateDirPrefix() + user + "/" : part + "/");
-            this->pack_path = config->GetPackDir() + user_dir + fu.FileName() + config->GetPackFileSuffix();
-            this->url_path = config->GetDownloadPrefix() + user_dir + fu.FileName();
+            this->fsize = content.size();
+            this->atime = time(nullptr);
+            this->mtime = time(nullptr);
+
+            this->file_name = filename;
+            this->file_data = content;
+
+            this->real_path = filename;
+            this->pack_path = "";
+
+            std::string user_dir = (part == "private"
+                                        ? config->GetPrivateDirPrefix() + user + "/"
+                                        : "public/");
+
+            this->url_path = config->GetDownloadPrefix() + user_dir + filename;
             this->uploader = user;
             this->partition = part;
             this->download_count = 0;
+
             return true;
         }
     } BackupInfo;
@@ -49,297 +65,272 @@ namespace cloud
     class DataManager
     {
     private:
-        std::string _backup_file;
-        std::unordered_map<std::string, BackupInfo> _table;
+        MYSQL *_mysql;
         pthread_rwlock_t _rwlock;
 
-        std::atomic<bool> _need_storage{false}; // 标记是否需要持久化
-        std::thread _storage_thread;            // 后台持久化线程
-        std::condition_variable _cv;            // 条件变量，触发持久化
-        std::mutex _cv_mutex;
-
     private:
-        void ScanAndSyncFolders()
+        bool Connect()
         {
             Config *conf = Config::GetInstance();
-            std::string back_dir = conf->GetBackDir();
-            std::string pack_dir = conf->GetPackDir();
-            std::string pack_suffix = conf->GetPackFileSuffix();
-            std::string private_prefix = conf->GetPrivateDirPrefix();
-            std::string download_prefix = conf->GetDownloadPrefix();
 
-            // 辅助函数：检查文件是否已在_table中（基于url_path）
-            auto is_in_table = [this](const std::string &url) -> bool
+            _mysql = mysql_init(nullptr);
+            if (_mysql == nullptr)
             {
-                pthread_rwlock_rdlock(&_rwlock);
-                bool exists = (_table.find(url) != _table.end());
-                pthread_rwlock_unlock(&_rwlock);
-                return exists;
-            };
-
-            // 扫描公共区 (backdir/public/ 和 packdir/public/)
-            ScanDirAndAdd(back_dir + "public/", "public", false, pack_suffix, download_prefix, is_in_table);
-            ScanDirAndAdd(pack_dir + "public/", "public", true, pack_suffix, download_prefix, is_in_table);
-
-            // 扫描私有区 (backdir/private_user/* 和 packdir/private_user/*)
-            for (auto &p : fs::directory_iterator(back_dir + private_prefix))
-            {
-                if (fs::is_directory(p))
-                {
-                    std::string user_dir = fs::path(p).filename().string() + "/";
-                    std::string partition = "private";
-                    std::string user = fs::path(p).filename().string(); // 用户名从目录名提取
-                    ScanDirAndAdd(back_dir + private_prefix + user_dir, partition, false, pack_suffix, download_prefix, is_in_table, user);
-                    ScanDirAndAdd(pack_dir + private_prefix + user_dir, partition, true, pack_suffix, download_prefix, is_in_table, user);
-                }
+                std::cerr << "mysql_init failed" << std::endl;
+                return false;
             }
 
-            // 如果扫描到新文件，标记需要存储
-            _need_storage = true;
-            _cv.notify_one();
+            mysql_options(_mysql, MYSQL_SET_CHARSET_NAME, "utf8mb4");
+
+            if (mysql_real_connect(_mysql,
+                                   conf->GetMysqlHost().c_str(),
+                                   conf->GetMysqlUser().c_str(),
+                                   conf->GetMysqlPass().c_str(),
+                                   conf->GetMysqlDB().c_str(),
+                                   conf->GetMysqlPort(),
+                                   nullptr,
+                                   0) == nullptr)
+            {
+                std::cerr << "mysql_real_connect failed: "
+                          << mysql_error(_mysql) << std::endl;
+                mysql_close(_mysql);
+                _mysql = nullptr;
+                return false;
+            }
+
+            return true;
         }
 
-        void ScanDirAndAdd(const std::string &dir_path, const std::string &partition, bool is_pack, const std::string &pack_suffix,
-                           const std::string &download_prefix, std::function<bool(const std::string &)> is_in_table,
-                           const std::string &default_uploader = "unknown")
+        bool ExecSQL(const std::string &sql)
         {
-            if (!fs::exists(dir_path))
-                return;
-
-            Config *conf = Config::GetInstance();
-            std::string private_prefix = conf->GetPrivateDirPrefix();
-            std::string back_dir = conf->GetBackDir();
-            std::string pack_dir = conf->GetPackDir();
-
-            for (auto &p : fs::directory_iterator(dir_path))
+            if (_mysql == nullptr)
             {
-                if (fs::is_directory(p))
-                    continue; // 跳过子目录
-
-                std::string full_path = fs::path(p).string();
-                std::string filename = fs::path(p).filename().string();
-                std::string url_path;
-
-                if (is_pack)
-                {
-                    // packdir中的文件：去掉.lz后缀，计算url_path
-                    if (filename.size() <= pack_suffix.size() || filename.substr(filename.size() - pack_suffix.size()) != pack_suffix)
-                        continue;
-                    std::string orig_filename = filename.substr(0, filename.size() - pack_suffix.size());
-                    url_path = download_prefix + (partition == "public" ? "public/" : private_prefix + default_uploader + "/") + orig_filename;
-                }
-                else
-                {
-                    // backdir中的文件：直接计算url_path
-                    url_path = download_prefix + (partition == "public" ? "public/" : private_prefix + default_uploader + "/") + filename;
-                }
-
-                if (is_in_table(url_path))
-                    continue; // 已存在，跳过
-
-                BackupInfo info;
-                info.pack_flag = is_pack;
-                FileUtil fu(full_path);
-                info.fsize = fu.FileSize();
-                info.atime = fu.LastATime();
-                info.mtime = fu.LastMTime();
-                info.real_path = is_pack ? dir_path.substr(0, dir_path.find("packdir/")) + "backdir/" + filename.substr(0, filename.size() - pack_suffix.size()) : full_path; // 修正 real_path
-                // 创建 dir_path 副本进行 replace 操作，避免 const 问题
-                std::string modified_dir = dir_path;
-                size_t pos = modified_dir.find("backdir/");
-                if (pos != std::string::npos)
-                {
-                    modified_dir.replace(pos, 5, "packdir/");
-                }
-                else
-                {
-                    // 如果未找到 "back/"，使用原 dir_path（或根据实际路径调整，假设配置正确）
-                    std::cerr << "Warning: 'backdir/' not found in dir_path: " << dir_path << std::endl;
-                }
-                info.pack_path = is_pack ? full_path : modified_dir + filename + pack_suffix;
-                info.url_path = url_path;
-                info.uploader = default_uploader;
-                info.partition = partition;
-                info.download_count = 0; // 扫描添加时初始化下载次数为0
-
-                Insert(info);
+                std::cerr << "mysql connection is null" << std::endl;
+                return false;
             }
+
+            if (mysql_query(_mysql, sql.c_str()) != 0)
+            {
+                std::cerr << "mysql_query failed: "
+                          << mysql_error(_mysql)
+                          << "\nSQL: " << sql << std::endl;
+                return false;
+            }
+
+            return true;
+        }
+
+        std::string Escape(const std::string &src)
+        {
+            if (_mysql == nullptr || src.empty())
+            {
+                return "";
+            }
+
+            std::string dst;
+            dst.resize(src.size() * 2 + 1);
+
+            unsigned long len = mysql_real_escape_string(
+                _mysql,
+                &dst[0],
+                src.data(),
+                src.size());
+
+            dst.resize(len);
+            return dst;
         }
 
     public:
         DataManager()
+            : _mysql(nullptr)
         {
-            Config *conf = Config::GetInstance();
-            _backup_file = conf->GetBackupFile();
             pthread_rwlock_init(&_rwlock, nullptr);
-            InitLoad();
-            _storage_thread = std::thread([this]()                                          
+
+            if (!Connect())
             {
-                while (true) 
-                {
-                    std::unique_lock<std::mutex> lock(_cv_mutex); // 加锁，保护共享区
-                    _cv.wait(lock, [this]() { return _need_storage.load(); }); // 高效等待
-                    Storage(); // 执行任务
-                    _need_storage = false; // 重置信号
-                } 
-            });
+                std::cerr << "connect mysql failed!" << std::endl;
+            }
         }
+
         ~DataManager()
         {
-            _need_storage = true;
-            _cv.notify_all();
-            _storage_thread.join(); // 作为最终保障，手动调用 Storage()
-            Storage();
+            if (_mysql)
+            {
+                mysql_close(_mysql);
+                _mysql = nullptr;
+            }
+
             pthread_rwlock_destroy(&_rwlock);
         }
+
         bool Insert(const BackupInfo &info)
         {
             pthread_rwlock_wrlock(&_rwlock);
-            _table[info.url_path] = info;
-            _need_storage = true; // 标记需要持久化
-            _cv.notify_one();     // 通知后台线程进行持久化
+
+            std::string sql =
+                "INSERT INTO cloud_files "
+                "(url_path, file_name, uploader, file_partition, fsize, atime, mtime, download_count, file_data) "
+                "VALUES ('" +
+                Escape(info.url_path) + "', '" +
+                Escape(info.file_name) + "', '" +
+                Escape(info.uploader) + "', '" +
+                Escape(info.partition) + "', " +
+                std::to_string(info.fsize) + ", " +
+                std::to_string(info.atime) + ", " +
+                std::to_string(info.mtime) + ", " +
+                std::to_string(info.download_count) + ", '" +
+                Escape(info.file_data) + "')";
+
+            bool ret = ExecSQL(sql);
+
             pthread_rwlock_unlock(&_rwlock);
-            return true;
+            return ret;
         }
+
         bool Delete(const BackupInfo &info)
         {
             pthread_rwlock_wrlock(&_rwlock);
-            auto e = _table.find(info.url_path);
-            if (e == _table.end())
-            {
-                pthread_rwlock_unlock(&_rwlock);
-                std::cerr << "Delete failed: URL not found - " << info.url_path << std::endl; 
-                return false;
-            }
-            _table.erase(e);
-            _need_storage = true;
-            _cv.notify_one();
+
+            std::string sql =
+                "DELETE FROM cloud_files WHERE url_path='" +
+                Escape(info.url_path) + "'";
+
+            bool ret = ExecSQL(sql);
+
             pthread_rwlock_unlock(&_rwlock);
-            return true;
+            return ret;
         }
+
         bool Update(const BackupInfo &info)
         {
             pthread_rwlock_wrlock(&_rwlock);
-            _table[info.url_path] = info;
-            _need_storage = true; // 标记需要持久化
-            _cv.notify_one();     // 通知后台线程进行持久化
+
+            std::string sql =
+                "UPDATE cloud_files SET "
+                "atime=" + std::to_string(info.atime) +
+                ", mtime=" + std::to_string(info.mtime) +
+                ", download_count=" + std::to_string(info.download_count) +
+                " WHERE url_path='" + Escape(info.url_path) + "'";
+
+            bool ret = ExecSQL(sql);
+
             pthread_rwlock_unlock(&_rwlock);
-            return true;
+            return ret;
         }
+
         bool GetOneByURL(const std::string &url, BackupInfo *info)
         {
-            pthread_rwlock_wrlock(&_rwlock);
-            auto e = _table.find(url);
-            if (e == _table.end())
+            pthread_rwlock_rdlock(&_rwlock);
+
+            std::string sql =
+                "SELECT url_path, file_name, uploader, file_partition, fsize, atime, mtime, download_count, file_data "
+                "FROM cloud_files WHERE url_path='" +
+                Escape(url) + "' LIMIT 1";
+
+            if (mysql_query(_mysql, sql.c_str()) != 0)
             {
+                std::cerr << "GetOneByURL failed: " << mysql_error(_mysql) << std::endl;
                 pthread_rwlock_unlock(&_rwlock);
                 return false;
             }
-            *info = e->second;
-            pthread_rwlock_unlock(&_rwlock);
-            return true;
-        }
-        bool GetOneByRealPath(const std::string &realpath, BackupInfo *info)
-        {
-            pthread_rwlock_wrlock(&_rwlock);
-            auto e = _table.begin();
-            for (; e != _table.end(); ++e)
+
+            MYSQL_RES *res = mysql_store_result(_mysql);
+            if (res == nullptr)
             {
-                if (e->second.real_path == realpath)
-                {
-                    *info = e->second;
-                    pthread_rwlock_unlock(&_rwlock);
-                    return true;
-                }
+                std::cerr << "mysql_store_result failed: " << mysql_error(_mysql) << std::endl;
+                pthread_rwlock_unlock(&_rwlock);
+                return false;
             }
-            pthread_rwlock_unlock(&_rwlock);
-            return false;
-        }
-        bool GetAll(std::vector<BackupInfo> *arry)
-        {
-            pthread_rwlock_wrlock(&_rwlock);
-            for (auto &p : _table)
+
+            MYSQL_ROW row = mysql_fetch_row(res);
+            unsigned long *lengths = mysql_fetch_lengths(res);
+
+            if (row == nullptr)
             {
-                arry->push_back(p.second);
+                mysql_free_result(res);
+                pthread_rwlock_unlock(&_rwlock);
+                return false;
             }
-            pthread_rwlock_unlock(&_rwlock);
-            return true;
-        }
-        // 存储
-        bool Storage()
-        {
-            // 获取数据
-            std::vector<BackupInfo> arry;
-            this->GetAll(&arry);
-            // 存储到Json中
-            Json::Value root;
-            for (int i = 0; i < arry.size(); i++)
-            {             
-                Json::Value tmp;
-                tmp["pack_flag"] = arry[i].pack_flag;
-                tmp["fsize"] = (Json::Int64)arry[i].fsize; 
-                tmp["atime"] = (Json::Int64)arry[i].atime;
-                tmp["mtime"] = (Json::Int64)arry[i].mtime;
-                tmp["pack_path"] = arry[i].pack_path;
-                tmp["real_path"] = arry[i].real_path;
-                tmp["url_path"] = arry[i].url_path;
-                tmp["uploader"] = arry[i].uploader;
-                tmp["partition"] = arry[i].partition;
-                tmp["download_count"] = arry[i].download_count; 
-                root.append(tmp);
-            }
-            // 序列化
-            std::string body;
-            JsonUtil::Serialize(root, &body);
-            // 重新写入文件
-            FileUtil fu(_backup_file);
-            fu.SetContent(body);
-            // std::cout << "Manual storage completed." << std::endl;
-            return true;
-        }
-        // 初始化加载,从配置文件中加载的
-        bool InitLoad()
-        {
-            // 先加载cloud.dat
-            FileUtil fu(_backup_file);
-            if (fu.Exists())
+
+            info->url_path = row[0] ? row[0] : "";
+            info->file_name = row[1] ? row[1] : "";
+            info->uploader = row[2] ? row[2] : "";
+            info->partition = row[3] ? row[3] : "";
+            info->fsize = row[4] ? std::stoull(row[4]) : 0;
+            info->atime = row[5] ? std::stoll(row[5]) : 0;
+            info->mtime = row[6] ? std::stoll(row[6]) : 0;
+            info->download_count = row[7] ? std::stoi(row[7]) : 0;
+
+            if (row[8] != nullptr)
             {
-                std::string body;
-                fu.GetContent(&body);
-                Json::Value root;
-                if (JsonUtil::UnSerialize(body, &root))
-                {
-                    for (int i = 0; i < root.size(); i++)
-                    {
-                        BackupInfo info;
-                        info.pack_flag = root[i]["pack_flag"].asBool();
-                        info.fsize = root[i]["fsize"].asInt64();
-                        info.atime = root[i]["atime"].asInt64();
-                        info.mtime = root[i]["mtime"].asInt64();
-                        info.pack_path = root[i]["pack_path"].asString();
-                        info.real_path = root[i]["real_path"].asString();
-                        info.url_path = root[i]["url_path"].asString();
-                        info.uploader = root[i]["uploader"].asString();
-                        info.partition = root[i]["partition"].asString();
-                        info.download_count = root[i]["download_count"].asInt(); 
-                        Insert(info);  // Insert会设置_need_storage，但我们稍后会统一存储
-                    }
-                }
-                else
-                {
-                    std::cout << "Failed to parse cloud.dat, scanning folders instead." << std::endl;
-                }
+                info->file_data.assign(row[8], lengths[8]);
             }
             else
             {
-                std::cout << "cloud.dat not found, scanning folders." << std::endl;
+                info->file_data.clear();
             }
 
-            // 扫描backdir和packdir，添加缺失的文件
-            ScanAndSyncFolders();
+            info->pack_flag = false;
+            info->pack_path = "";
+            info->real_path = info->file_name;
 
-            // 加载后立即持久化，确保_table与cloud.dat同步
-            Storage();
+            mysql_free_result(res);
+            pthread_rwlock_unlock(&_rwlock);
+            return true;
+        }
+
+        bool GetOneByRealPath(const std::string &realpath, BackupInfo *info)
+        {
+            // 数据库存储后不再根据真实磁盘路径查询。
+            return false;
+        }
+
+        bool GetAll(std::vector<BackupInfo> *arry)
+        {
+            pthread_rwlock_rdlock(&_rwlock);
+
+            std::string sql =
+                "SELECT url_path, file_name, uploader, file_partition, fsize, atime, mtime, download_count "
+                "FROM cloud_files";
+
+            if (mysql_query(_mysql, sql.c_str()) != 0)
+            {
+                std::cerr << "GetAll failed: " << mysql_error(_mysql) << std::endl;
+                pthread_rwlock_unlock(&_rwlock);
+                return false;
+            }
+
+            MYSQL_RES *res = mysql_store_result(_mysql);
+            if (res == nullptr)
+            {
+                std::cerr << "mysql_store_result failed: " << mysql_error(_mysql) << std::endl;
+                pthread_rwlock_unlock(&_rwlock);
+                return false;
+            }
+
+            MYSQL_ROW row;
+            while ((row = mysql_fetch_row(res)) != nullptr)
+            {
+                BackupInfo info;
+                info.url_path = row[0] ? row[0] : "";
+                info.file_name = row[1] ? row[1] : "";
+                info.uploader = row[2] ? row[2] : "";
+                info.partition = row[3] ? row[3] : "";
+                info.fsize = row[4] ? std::stoull(row[4]) : 0;
+                info.atime = row[5] ? std::stoll(row[5]) : 0;
+                info.mtime = row[6] ? std::stoll(row[6]) : 0;
+                info.download_count = row[7] ? std::stoi(row[7]) : 0;
+
+                info.pack_flag = false;
+                info.real_path = info.file_name;
+                info.pack_path = "";
+                info.file_data = "";
+
+                arry->push_back(info);
+            }
+
+            mysql_free_result(res);
+            pthread_rwlock_unlock(&_rwlock);
             return true;
         }
     };

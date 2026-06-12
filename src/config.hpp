@@ -26,6 +26,12 @@ namespace cloud
         std::string _backup_file;
         std::string _private_dir_prefix;
 
+        std::string _mysql_host;
+        int _mysql_port;
+        std::string _mysql_user;
+        std::string _mysql_pass;
+        std::string _mysql_db;
+
         // 获取配置文件信息
         bool ReadConfigFile()
         {
@@ -51,6 +57,12 @@ namespace cloud
             _back_dir = root["back_dir"].asString();
             _backup_file = root["backup_file"].asString();
             _private_dir_prefix = root["private_dir_prefix"].asString();
+
+            _mysql_host = root["mysql_host"].asString();
+            _mysql_port = root["mysql_port"].asInt();
+            _mysql_user = root["mysql_user"].asString();
+            _mysql_pass = root["mysql_pass"].asString();
+            _mysql_db = root["mysql_db"].asString();
             return true;
         }
 
@@ -77,5 +89,11 @@ namespace cloud
         std::string GetBackDir() { return _back_dir; }
         std::string GetBackupFile() { return _backup_file; }
         std::string GetPrivateDirPrefix() { return _private_dir_prefix; }
+
+        std::string GetMysqlHost() { return _mysql_host; }
+        int GetMysqlPort() { return _mysql_port; }
+        std::string GetMysqlUser() { return _mysql_user; }
+        std::string GetMysqlPass() { return _mysql_pass; }
+        std::string GetMysqlDB() { return _mysql_db; }
     };
 }

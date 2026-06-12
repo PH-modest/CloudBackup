@@ -157,26 +157,15 @@ namespace cloud
 
 cloud::DataManager *_data = nullptr;
 cloud::UserManager *_user_mgr = nullptr;
-void HotTest()
-{
-    cloud::HotManager hot;
-    hot.RunModule();
-}
 
-void ServiceTest()
-{
-    cloud::Service srv;
-    srv.RunModule();
-}
-
-int main(int argc,char *argv[])
+int main(int argc, char *argv[])
 {
     _user_mgr = new cloud::UserManager();
     _data = new cloud::DataManager();
-    std::thread thread_hot_manager(HotTest);
-    std::thread thread_service(ServiceTest);
-    thread_hot_manager.join();
-    thread_service.join();
+
+    cloud::Service srv;
+    srv.RunModule();
+
     delete _data;
     delete _user_mgr;
     return 0;
